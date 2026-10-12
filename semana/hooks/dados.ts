@@ -268,6 +268,12 @@ export function lerConclusoes(salvas: Conclusoes | undefined, eventos: unknown[]
   }
 }
 
+/** O primeiro nome de quem está logado, da resposta de `basecamp me --json`. */
+export function primeiroNome(resposta: unknown): string | null {
+  const nome = (resposta as { data?: { identity?: { first_name?: unknown } } } | null)?.data?.identity?.first_name
+  return typeof nome === 'string' && nome.trim() !== '' ? nome.trim() : null
+}
+
 export function contaDoBasecamp(respostas: unknown[]): string | null {
   for (const resposta of respostas) {
     const itens = (resposta as { data?: TarefaBruta[] } | null)?.data
@@ -295,6 +301,8 @@ export function montarSemana(args: {
   upNext?: Prioridade[]
   avisos: string[]
   contaBasecamp: string | null
+  /** Primeiro nome no Basecamp; sem ele, o título fica genérico. */
+  nome?: string | null
 }): Semana {
   const upNext = args.upNext ?? []
   const jaListadas = new Set(args.tarefas.map(t => t.id))
@@ -345,5 +353,6 @@ export function montarSemana(args: {
     atualizadoEm: `${dois(agora.getHours())}:${dois(agora.getMinutes())}`,
     avisos: args.avisos,
     contaBasecamp: args.contaBasecamp,
+    nome: args.nome ?? null,
   }
 }

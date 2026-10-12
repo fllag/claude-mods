@@ -15,6 +15,8 @@ O **ritmo** é a média de tarefas que você concluiu por dia útil nas últimas
 
 **Prioridade:** comece o título da tarefa no Basecamp com 🔴 para urgente ou 🟢 para importante. Ela sobe na lista e ganha uma bolinha colorida no painel. Não usa ícone? Tudo funciona igual, só sem esse destaque.
 
+O título leva o seu primeiro nome do Basecamp, como "Semana de Ana". Sem o Basecamp, fica "Sua semana".
+
 No app desktop o painel é desenhado e acompanha o tema claro ou escuro. No terminal ele vira texto, com o resumo de hoje.
 
 ## Antes de instalar

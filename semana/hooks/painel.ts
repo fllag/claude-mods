@@ -189,6 +189,13 @@ const curta = (data: string) => {
   return `${p.dia} ${MESES[p.mes]}`
 }
 
+/**
+ * "Semana de Ana": o "de" sem artigo serve para qualquer pessoa, sem adivinhar
+ * "do" ou "da". Sem nome, "Sua semana".
+ */
+export const tituloDaSemana = (nome: string | null | undefined): string =>
+  nome ? `Semana de ${nome}` : 'Sua semana'
+
 export function periodo(inicio: string, fim: string): string {
   const a = dataPartes(inicio)
   const b = dataPartes(fim)

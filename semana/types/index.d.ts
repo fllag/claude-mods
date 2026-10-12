@@ -63,6 +63,8 @@ export type Semana = {
   avisos: string[]
   /** Conta do Basecamp, para o link de "minhas tarefas". */
   contaBasecamp: string | null
+  /** Primeiro nome no Basecamp, para o título; ausente numa leitura salva por versão anterior. */
+  nome?: string | null
 }
 
 declare module 'claude-code' {

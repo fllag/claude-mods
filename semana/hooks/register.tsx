@@ -21,14 +21,14 @@ import {
   normalizarTarefas,
   normalizarUpNext,
   precisaDoHistorico,
+  primeiroNome,
   servidoresDaAgenda,
   somarDias,
   textoDoResultado,
 } from './dados'
-import { desenharSemana, hojeEmLinhas, periodo, resumoEmTexto } from './painel'
+import { desenharSemana, hojeEmLinhas, periodo, resumoEmTexto, tituloDaSemana } from './painel'
 
 const PAINEL = 'semana'
-const TITULO = 'Sua semana'
 const QUINZE_MINUTOS = 15 * 60_000
 // Avanço de uma célula da fonte de código do app: converte colunas em pixels.
 const PIXELS_POR_COLUNA = 7.8
@@ -89,7 +89,7 @@ async function buscarAgenda($: EngineInterface, hoje: string): Promise<unknown> 
   throw new Error(falhas.join(' | ') || 'nenhum conector de agenda encontrado')
 }
 
-type RespostasDoBasecamp = { pendentes: unknown[]; concluidas: unknown; upNext: unknown; linhaDoTempo: unknown }
+type RespostasDoBasecamp = { pendentes: unknown[]; concluidas: unknown; upNext: unknown; linhaDoTempo: unknown; eu: unknown }
 
 // Os avisos dizem o que fazer: quem instala o mod pode não ter nada configurado.
 const AVISO_BASECAMP_AUSENTE =
@@ -97,9 +97,9 @@ const AVISO_BASECAMP_AUSENTE =
 const AVISO_BASECAMP_SEM_LOGIN = 'Não consegui ler o Basecamp. Rode basecamp auth login e tente de novo.'
 
 /**
- * Pendentes, concluídas, o Up next e a linha do tempo (de onde sai a data em
- * que cada tarefa foi concluída), tudo de uma vez. A linha do tempo é lenta:
- * `limite` diz quantos eventos pedir.
+ * Pendentes, concluídas, o Up next, a linha do tempo (de onde sai a data em
+ * que cada tarefa foi concluída) e quem está logado, tudo de uma vez. A linha
+ * do tempo é lenta: `limite` diz quantos eventos pedir.
  */
 async function buscarTarefas($: EngineInterface, limite: number): Promise<RespostasDoBasecamp> {
   const home = await $.env.get('HOME')
@@ -121,13 +121,14 @@ async function buscarTarefas($: EngineInterface, limite: number): Promise<Respos
       .catch(() => null)
 
   for (const bin of caminhos) {
-    const [concluidas, upNext, linhaDoTempo, ...pendentes] = await Promise.all([
+    const [eu, concluidas, upNext, linhaDoTempo, ...pendentes] = await Promise.all([
+      rodar([bin, 'me', '--json']),
       rodar([bin, 'assignments', 'completed', '--json']),
       rodar([bin, 'assignments', 'list', '--json']),
       rodar([bin, 'timeline', 'me', '--limit', String(limite), '--agent', '--jq', '[.[] | {kind, created_at, url}]']),
       ...ESCOPOS_BASECAMP.map(escopo => rodar([bin, 'assignments', 'due', escopo, '--json'])),
     ])
-    if (pendentes.some(r => r !== null)) return { pendentes, concluidas, upNext, linhaDoTempo }
+    if (pendentes.some(r => r !== null)) return { pendentes, concluidas, upNext, linhaDoTempo, eu }
   }
   throw new Error(achouCli ? AVISO_BASECAMP_SEM_LOGIN : AVISO_BASECAMP_AUSENTE)
 }
@@ -149,7 +150,7 @@ async function carregarSemana($: EngineInterface): Promise<Semana> {
     }),
     buscarTarefas($, limite).catch((erro: unknown): RespostasDoBasecamp => {
       avisos.push(erro instanceof Error ? erro.message : AVISO_BASECAMP_SEM_LOGIN)
-      return { pendentes: [], concluidas: null, upNext: null, linhaDoTempo: null }
+      return { pendentes: [], concluidas: null, upNext: null, linhaDoTempo: null, eu: null }
     }),
   ])
 
@@ -170,6 +171,7 @@ async function carregarSemana($: EngineInterface): Promise<Semana> {
     upNext: normalizarUpNext(tarefas.upNext),
     avisos,
     contaBasecamp: contaDoBasecamp(tarefas.pendentes),
+    nome: primeiroNome(tarefas.eu),
   })
 }
 
@@ -252,7 +254,7 @@ export const register: Register = on => {
       return (
         <Box flexDirection="column">
           <Text bold color="#765AA6">
-            {TITULO} · {periodo(inicio, fim)}
+            {tituloDaSemana(atual.nome)} · {periodo(inicio, fim)}
           </Text>
           <Text dimColor>{resumoEmTexto(atual)}</Text>
           {hojeEmLinhas(atual).map(linha => (
@@ -267,7 +269,10 @@ export const register: Register = on => {
     }
 
     const { Svg } = $.ui.resolve(e)
-    const { svg } = desenharSemana(atual, { largura: e.props.bodyColumns * PIXELS_POR_COLUNA, titulo: TITULO })
+    const { svg } = desenharSemana(atual, {
+      largura: e.props.bodyColumns * PIXELS_POR_COLUNA,
+      titulo: tituloDaSemana(atual.nome),
+    })
     return (
       <Box flexDirection="column">
         {/* Como imagem: no quadro interativo o app usa um tamanho padrão pequeno e encolhe o desenho. */}

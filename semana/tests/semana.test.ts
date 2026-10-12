@@ -1,8 +1,8 @@
 import { expect, mock, test } from 'claude-code/testing'
 import type { On } from 'claude-code'
 
-import { importancia, lerConclusoes, montarSemana, semMarcaDePrioridade } from '../hooks/dados'
-import { alemDoRitmo, cargaDaSemana, desenharSemana, duracao } from '../hooks/painel'
+import { importancia, lerConclusoes, montarSemana, primeiroNome, semMarcaDePrioridade } from '../hooks/dados'
+import { alemDoRitmo, cargaDaSemana, desenharSemana, duracao, tituloDaSemana } from '../hooks/painel'
 
 // Terça, 13 de outubro de 2026, 10:15 no horário local.
 const AGORA = new Date(2026, 9, 13, 10, 15).getTime()
@@ -95,11 +95,13 @@ function mundo(on: On, { agenda: agendaFunciona = true, basecamp = 'ok' }: Mundo
         : JSON.stringify({
             ok: true,
             data:
-              sub === 'completed'
-                ? CONCLUIDAS
-                : sub === 'list'
-                  ? { priorities: UP_NEXT, non_priorities: [] }
-                  : (TAREFAS[escopo ?? ''] ?? []),
+              grupo === 'me'
+                ? { identity: { first_name: 'Ana', last_name: 'Teste' }, accounts: [] }
+                : sub === 'completed'
+                  ? CONCLUIDAS
+                  : sub === 'list'
+                    ? { priorities: UP_NEXT, non_priorities: [] }
+                    : (TAREFAS[escopo ?? ''] ?? []),
           })
     return { value: { exitCode: 0, stdout, stderr: '' } }
   })
@@ -153,6 +155,7 @@ test('o painel é um SVG no desktop', async ($, on) => {
   // A atrasada da semana passada fica dentro de Hoje, com a data em que venceu.
   expect(String(svg?.props.source)).toContain('>Revisão semanal</text>')
   expect(String(svg?.props.source)).toContain('>venceu 9 out</text>')
+  expect(String(svg?.props.source)).toContain('>Semana de Ana</text>')
   expect(String(svg?.props.source)).toContain('1:1 - Ana')
   expect(String(svg?.props.source)).not.toContain('Recusada')
   // Imagem, não quadro interativo: no app o quadro tem tamanho padrão e encolhe o desenho.
@@ -167,7 +170,8 @@ test('no terminal o painel vira texto', async ($, on) => {
   await $.command.run({ command: 'semana', args: '' })
   const ui = await $.ui.mount({ ...PAINEL, surface: 'terminal' })
 
-  expect(await ui.find({ type: 'Text', text: /Sua semana · 11 a 17 de outubro/ })).toBeDefined()
+  // O primeiro nome vem do Basecamp, com "de" para servir a qualquer pessoa.
+  expect(await ui.find({ type: 'Text', text: /Semana de Ana · 11 a 17 de outubro/ })).toBeDefined()
   expect(await ui.find({ type: 'Text', text: /14:00 {2}1:1 - Ana/ })).toBeDefined()
   expect(await ui.find({ type: 'Text', text: /○ Fechar proposta/ })).toBeDefined()
   expect(await ui.find({ key: 'atualizar' })).toBeDefined()
@@ -198,6 +202,8 @@ test('sem a CLI do Basecamp, o aviso diz como instalar', async ($, on) => {
   expect(svg).toContain('>Não achei a CLI do Basecamp. Instale o plugin')
   expect(svg).toContain('basecamp auth login.</text>')
   expect(svg).not.toContain('…</text>')
+  // Sem o Basecamp não há nome: o título fica genérico.
+  expect(svg).toContain('>Sua semana</text>')
   await ui.unmount()
 })
 
@@ -496,4 +502,15 @@ test('o Up next abre o dia, conta pela data e não se repete nas listas', () => 
   expect(svg).toContain('>2 tarefas</text>')
   expect(svg.match(/>Fechar contrato<\/text>/g)?.length).toBe(1)
   expect(svg).toContain('>Tarefa de amanhã</text>')
+})
+
+test('o título usa o primeiro nome do Basecamp, sem adivinhar "do" ou "da"', () => {
+  expect(primeiroNome({ ok: true, data: { identity: { first_name: '  Joe ', last_name: 'Silva' } } })).toBe('Joe')
+  expect(primeiroNome({ ok: true, data: { identity: { first_name: '' } } })).toBeNull()
+  expect(primeiroNome(null)).toBeNull()
+
+  expect(tituloDaSemana('Ana')).toBe('Semana de Ana')
+  expect(tituloDaSemana(null)).toBe('Sua semana')
+  // Leitura salva por versão anterior, sem o campo.
+  expect(tituloDaSemana(undefined)).toBe('Sua semana')
 })
