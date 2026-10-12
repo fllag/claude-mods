@@ -1,0 +1,5 @@
+.DS_Store
+# Tipos que o Claude Code gera ao carregar um mod em desenvolvimento.
+*/.claude-plugin/types/
+# Prévias do painel saem com dados reais: nunca sobem.
+previa-*.svg

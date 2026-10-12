@@ -1,0 +1,13 @@
+{
+  "name": "hospedin-mods",
+  "description": "Mods em teste do time da Hospedin para o Claude Code. Cada pessoa instala só o que quer.",
+  "owner": { "name": "Hospedin" },
+  "plugins": [
+    {
+      "name": "semana",
+      "description": "Painel com a sua semana: reuniões do Google Calendar e tarefas do Basecamp num lugar só. Abra com /semana.",
+      "source": "./semana",
+      "category": "productivity"
+    }
+  ]
+}
