@@ -189,6 +189,9 @@ const curta = (data: string) => {
   return `${p.dia} ${MESES[p.mes]}`
 }
 
+/** Só o primeiro nome: o período ao lado já diz que é a semana. Sem nome, "Minha semana". */
+export const tituloDaSemana = (nome: string | null | undefined): string => nome || 'Minha semana'
+
 export function periodo(inicio: string, fim: string): string {
   const a = dataPartes(inicio)
   const b = dataPartes(fim)
@@ -963,7 +966,7 @@ export function desenharSemana(semana: Semana, opcoes: OpcoesDoPainel = {}): { s
   const faixa = faixaDeHoras(semana.dias)
   const hoje = semana.dias.find(x => x.data === semana.hoje)
 
-  cabecalho(d, semana, opcoes.titulo ?? 'Sua semana')
+  cabecalho(d, semana, opcoes.titulo ?? 'Minha semana')
   numeros(d, semana)
   if (hoje !== undefined) cardDeHoje(d, semana, hoje, faixa)
   d.y += 10
