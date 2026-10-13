@@ -421,10 +421,11 @@ function numeros(d: Desenho, semana: Semana) {
   ]
 
   // A barra: cada trecho proporcional ao total, com um mínimo para um trecho
-  // pequeno não sumir (o que o mínimo acrescenta sai do maior) e um vão entre eles.
+  // pequeno não sumir (o que o mínimo acrescenta sai do maior) e um fio entre
+  // eles, o mesmo das colunas do gráfico.
   const yBarra = yTopo + 14
   const h = 10
-  const vao = 2
+  const vao = 1
   const visiveis = trechos.filter(t => t.n > 0)
   const livre = util - vao * Math.max(0, visiveis.length - 1)
   const larguras = visiveis.map(t => Math.max(4, (t.n / c.total) * livre))
@@ -583,7 +584,8 @@ function grafico(d: Desenho, semana: Semana) {
   const yLinha = base - escalaY(referencia)
   // Só o ritmo de verdade define o que passa da conta; a média da semana não.
   const yLinhaRitmo = ritmo === null ? null : yLinha
-  const vao = 2
+  // Um fio, não uma faixa: só o bastante para separar o concluído do que falta.
+  const vao = 1
 
   // Colunas, depois as linhas e, por cima de tudo, os números com um contorno
   // da cor do fundo, para a linha nunca cortar um número.
@@ -731,16 +733,17 @@ function escala(d: Desenho, y: number, faixa: [number, number], px: (m: number) 
 
 /**
  * As partes de "2 reuniões · 25 tarefas · 3 concluídas · 2 atrasadas": o total
- * do dia, com as concluídas incluídas; as atrasadas só no de hoje.
+ * do dia, com as concluídas incluídas. Quantas foram concluídas, só no de hoje:
+ * nos outros dias a linha fica curta, e o gráfico já mostra.
  */
-function resumoDoDia(dia: Dia, atrasadas = 0): string[] {
+function resumoDoDia(dia: Dia, atrasadas = 0, comConcluidas = false): string[] {
   const reunioes = dia.eventos.filter(e => e.comPessoas || e.diaInteiro).length
   const feitas = dia.concluidas ?? 0
   const total = dia.tarefas.length + feitas
   const partes = [
     reunioes > 0 ? plural(reunioes, 'reunião', 'reuniões') : '',
     total > 0 ? plural(total, 'tarefa', 'tarefas') : '',
-    feitas > 0 ? plural(feitas, 'concluída', 'concluídas') : '',
+    comConcluidas && feitas > 0 ? plural(feitas, 'concluída', 'concluídas') : '',
     atrasadas > 0 ? plural(atrasadas, 'atrasada', 'atrasadas') : '',
   ].filter(Boolean)
   return partes.length > 0 ? partes : ['livre']
@@ -929,7 +932,7 @@ function cardDeHoje(d: Desenho, semana: Semana, dia: Dia, faixa: [number, number
   const p = dataPartes(dia.data)
 
   let y = topo + 26
-  tituloDoDia(d, y, xEsq, xDir, 'Hoje', `${DIAS[p.semana]}, ${curta(dia.data)}`, resumoDoDia(dia, semana.atrasadas.length), 15, 'hoje')
+  tituloDoDia(d, y, xEsq, xDir, 'Hoje', `${DIAS[p.semana]}, ${curta(dia.data)}`, resumoDoDia(dia, semana.atrasadas.length, true), 15, 'hoje')
   y = agoraEProxima(d, semana, dia, xEsq, xDir, y + 2)
 
   // A barra do dia, com a escala embaixo. Sem legenda: reunião é o roxo
