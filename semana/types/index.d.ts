@@ -45,11 +45,20 @@ export type Dia = {
 export type Semana = {
   /** AAAA-MM-DD */
   hoje: string
+  /**
+   * Quantas semanas depois da de hoje: 0 é a semana de hoje, 1 a próxima, -1 a
+   * passada. Ausente numa leitura salva por versão anterior, que era sempre a de hoje.
+   */
+  deslocamento?: number
   /** Minutos desde a meia-noite na hora da leitura. */
   agora: number
   dias: Dia[]
+  /** Na semana de hoje, tudo o que venceu antes de hoje; numa passada, só as dela; numa futura, nenhuma. */
   atrasadas: Tarefa[]
-  /** O Up next, com qualquer data; ausente numa leitura salva por versão anterior. */
+  /**
+   * O Up next, com qualquer data, só na semana de hoje (é do bloco Hoje);
+   * ausente numa leitura salva por versão anterior.
+   */
   upNext?: Prioridade[]
   /**
    * Média de tarefas concluídas por dia útil (segunda a sexta) nas últimas 4
@@ -69,6 +78,7 @@ export type Semana = {
 
 declare module 'claude-code' {
   interface PluginState {
-    semana: { semana: Semana | null; carregando: boolean }
+    /** `deslocamento`: a semana que o painel mostra, a que a atualização relê. */
+    semana: { semana: Semana | null; carregando: boolean; deslocamento: number }
   }
 }

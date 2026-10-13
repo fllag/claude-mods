@@ -1,6 +1,7 @@
 // /semana abre um painel com os compromissos (Google Agenda) e as tarefas
-// (Basecamp) da semana, de domingo a sábado. No app desktop o painel é um SVG na
-// identidade da Hospedin; no terminal, que não desenha SVG, vira texto.
+// (Basecamp) da semana, de domingo a sábado: a de hoje, ou outra com
+// `/semana proxima`, `anterior`, `+2` ou `-3`. No app desktop o painel é um SVG
+// na identidade da Hospedin; no terminal, que não desenha SVG, vira texto.
 import { atom, read, update } from 'claude-code'
 import type { EngineInterface, Register } from 'claude-code'
 
@@ -12,21 +13,24 @@ import {
   dataLocal,
   DIAS_NA_JANELA,
   domingoDa,
-  ESCOPOS_BASECAMP,
+  escoposDoBasecamp,
   EVENTOS_NA_PRIMEIRA_LEITURA,
   EVENTOS_POR_LEITURA,
   lerConclusoes,
+  lerDeslocamento,
   montarSemana,
   normalizarEventos,
   normalizarTarefas,
   normalizarUpNext,
   precisaDoHistorico,
   primeiroNome,
+  SEMANAS_DO_RITMO,
+  SEMANAS_PARA_FRENTE,
   servidoresDaAgenda,
   somarDias,
   textoDoResultado,
 } from './dados'
-import { desenharSemana, hojeEmLinhas, periodo, resumoEmTexto, tituloDaSemana } from './painel'
+import { desenharSemana, diasEmLinhas, hojeEmLinhas, periodoDaSemana, resumoEmTexto, tituloDaSemana } from './painel'
 
 const PAINEL = 'semana'
 const QUINZE_MINUTOS = 15 * 60_000
@@ -35,6 +39,7 @@ const PIXELS_POR_COLUNA = 7.8
 
 const semana = atom({ plugin: 'semana', key: 'semana' } as const, null)
 const carregando = atom({ plugin: 'semana', key: 'carregando' } as const, false)
+const deslocamento = atom({ plugin: 'semana', key: 'deslocamento' } as const, 0)
 
 type PaginaDaAgenda = { events?: unknown[]; nextPageToken?: string }
 
@@ -64,24 +69,28 @@ async function eventosDoDia($: EngineInterface, servidor: string, dia: string): 
   return eventos
 }
 
-async function buscarAgenda($: EngineInterface, hoje: string): Promise<unknown> {
+/** Os eventos dos 7 dias a partir de `domingo`. */
+async function buscarAgenda($: EngineInterface, domingo: string, hoje: string): Promise<unknown> {
   const ferramentas = await $.tool.list().catch(() => [])
   const salvo = await $.store.get('servidorAgenda')
 
   const candidatos = servidoresDaAgenda(ferramentas.map(t => t.name), salvo)
   const falhas: string[] = []
 
+  const dias = Array.from({ length: DIAS_NA_JANELA }, (_, i) => somarDias(domingo, i))
+  // Hoje, ou o domingo de outra semana, primeiro e sozinho: se o Claude Code
+  // pedir permissão, pede uma vez só.
+  const inicial = dias.includes(hoje) ? hoje : domingo
+
   for (const servidor of candidatos) {
-    // Hoje primeiro, sozinho: se o Claude Code pedir permissão, pede uma vez só.
-    const primeiro = await eventosDoDia($, servidor, hoje).catch((erro: unknown) => {
+    const primeiro = await eventosDoDia($, servidor, inicial).catch((erro: unknown) => {
       falhas.push(`${servidor}: ${erro instanceof Error ? erro.message : String(erro)}`)
       return null
     })
     if (primeiro === null) continue
     if (servidor !== salvo) await $.store.set('servidorAgenda', servidor)
 
-    const domingo = domingoDa(hoje)
-    const outros = Array.from({ length: DIAS_NA_JANELA }, (_, i) => somarDias(domingo, i)).filter(dia => dia !== hoje)
+    const outros = dias.filter(dia => dia !== inicial)
     const resto = await Promise.all(outros.map(dia => eventosDoDia($, servidor, dia)))
     return { events: [...primeiro, ...resto.flat()] }
   }
@@ -97,11 +106,11 @@ const AVISO_BASECAMP_AUSENTE =
 const AVISO_BASECAMP_SEM_LOGIN = 'Não consegui ler o Basecamp. Rode basecamp auth login e tente de novo.'
 
 /**
- * Pendentes, concluídas, o Up next, a linha do tempo (de onde sai a data em
- * que cada tarefa foi concluída) e quem está logado, tudo de uma vez. A linha
- * do tempo é lenta: `limite` diz quantos eventos pedir.
+ * Pendentes dos `escopos`, concluídas, o Up next, a linha do tempo (de onde
+ * sai a data em que cada tarefa foi concluída) e quem está logado, tudo de uma
+ * vez. A linha do tempo é lenta: `limite` diz quantos eventos pedir.
  */
-async function buscarTarefas($: EngineInterface, limite: number): Promise<RespostasDoBasecamp> {
+async function buscarTarefas($: EngineInterface, limite: number, escopos: readonly string[]): Promise<RespostasDoBasecamp> {
   const home = await $.env.get('HOME')
   const caminhos = [
     'basecamp',
@@ -126,16 +135,18 @@ async function buscarTarefas($: EngineInterface, limite: number): Promise<Respos
       rodar([bin, 'assignments', 'completed', '--json']),
       rodar([bin, 'assignments', 'list', '--json']),
       rodar([bin, 'timeline', 'me', '--limit', String(limite), '--agent', '--jq', '[.[] | {kind, created_at, url}]']),
-      ...ESCOPOS_BASECAMP.map(escopo => rodar([bin, 'assignments', 'due', escopo, '--json'])),
+      ...escopos.map(escopo => rodar([bin, 'assignments', 'due', escopo, '--json'])),
     ])
     if (pendentes.some(r => r !== null)) return { pendentes, concluidas, upNext, linhaDoTempo, eu }
   }
   throw new Error(achouCli ? AVISO_BASECAMP_SEM_LOGIN : AVISO_BASECAMP_AUSENTE)
 }
 
-async function carregarSemana($: EngineInterface): Promise<Semana> {
+/** A semana `semanas` semanas depois da de hoje: 0 é a de hoje. */
+async function carregarSemana($: EngineInterface, semanas: number): Promise<Semana> {
   const agoraMs = await $.clock.now()
   const hoje = dataLocal(agoraMs)
+  const domingo = somarDias(domingoDa(hoje), 7 * semanas)
   const avisos: string[] = []
   // As conclusões já lidas ficam guardadas: depois da primeira leitura, basta
   // pedir à linha do tempo os eventos mais recentes.
@@ -143,12 +154,12 @@ async function carregarSemana($: EngineInterface): Promise<Semana> {
   const limite = precisaDoHistorico(salvas, hoje) ? EVENTOS_NA_PRIMEIRA_LEITURA : EVENTOS_POR_LEITURA
 
   const [agenda, tarefas] = await Promise.all([
-    buscarAgenda($, hoje).catch((erro: unknown) => {
+    buscarAgenda($, domingo, hoje).catch((erro: unknown) => {
       const motivo = (erro instanceof Error ? erro.message : String(erro)).slice(0, 200)
       avisos.push(`Não consegui ler a agenda. Confira se o Google Calendar está conectado no claude.ai (${motivo}).`)
       return null
     }),
-    buscarTarefas($, limite).catch((erro: unknown): RespostasDoBasecamp => {
+    buscarTarefas($, limite, escoposDoBasecamp(semanas)).catch((erro: unknown): RespostasDoBasecamp => {
       avisos.push(erro instanceof Error ? erro.message : AVISO_BASECAMP_SEM_LOGIN)
       return { pendentes: [], concluidas: null, upNext: null, linhaDoTempo: null, eu: null }
     }),
@@ -164,6 +175,7 @@ async function carregarSemana($: EngineInterface): Promise<Semana> {
 
   return montarSemana({
     agoraMs,
+    deslocamento: semanas,
     eventos: normalizarEventos(agenda),
     tarefas: normalizarTarefas(tarefas.pendentes),
     concluidas: normalizarTarefas([tarefas.concluidas]),
@@ -175,16 +187,29 @@ async function carregarSemana($: EngineInterface): Promise<Semana> {
   })
 }
 
-async function atualizar($: EngineInterface): Promise<Semana | null> {
-  if (await read($, carregando)) return read($, semana)
-  await update($, carregando, () => true)
+// As leituras em curso, por semana: quem pede a mesma semana espera a mesma
+// leitura, e quem pede outra não fica com a resposta da anterior.
+const leituras = new Map<number, Promise<Semana>>()
+
+/** Relê a semana que o painel mostra e a põe no painel. */
+async function atualizar($: EngineInterface): Promise<Semana> {
+  const semanas = await read($, deslocamento)
+  const emCurso = leituras.get(semanas)
+  if (emCurso !== undefined) return emCurso
+
+  const leitura = carregarSemana($, semanas)
+  leituras.set(semanas, leitura)
   try {
-    const nova = await carregarSemana($)
-    await update($, semana, () => nova)
-    await $.store.set('ultimaSemana', nova)
+    await update($, carregando, () => true)
+    const nova = await leitura
+    // Enquanto lia, um /semana pode ter pedido outra semana: essa fica de fora do painel.
+    if ((await read($, deslocamento)) === semanas) await update($, semana, () => nova)
+    // Ao abrir, a sessão mostra a última leitura da semana de hoje, que é a do /semana.
+    if (semanas === 0) await $.store.set('ultimaSemana', nova)
     return nova
   } finally {
-    await update($, carregando, () => false)
+    leituras.delete(semanas)
+    await update($, carregando, () => leituras.size > 0)
   }
 }
 
@@ -193,6 +218,7 @@ export const register: Register = on => {
     await $.command.register({
       name: 'semana',
       description: 'Abre o painel com seus compromissos e tarefas da semana',
+      argumentHint: '[proxima | anterior | +N | -N]',
     })
     // A última leitura aparece na hora; a nova chega quando o painel abre.
     const salva = await $.store.get('ultimaSemana')
@@ -206,13 +232,24 @@ export const register: Register = on => {
     return next(e)
   })
 
-  on('command.run', { command: 'semana' }, async $ => {
+  on('command.run', { command: 'semana' }, async ($, e) => {
+    const semanas = lerDeslocamento(e.args)
+    if (semanas === null) {
+      return { text: `Não entendi "${e.args.trim()}". Use /semana, /semana proxima, /semana anterior ou /semana +2.` }
+    }
+    if (semanas < -SEMANAS_DO_RITMO || semanas > SEMANAS_PARA_FRENTE) {
+      return {
+        text: `Dá para ver até ${SEMANAS_DO_RITMO} semanas para trás e ${SEMANAS_PARA_FRENTE} para frente.`,
+      }
+    }
+
+    await update($, deslocamento, () => semanas)
     const aberto = await $.ui.open({ id: PAINEL, title: 'Semana' })
     const lida = await atualizar($)
     const painel = aberto.isPlaced ? [] : [`O painel não abriu: ${aberto.reason}`]
 
     return {
-      text: [lida === null ? 'Painel da semana aberto.' : resumoEmTexto(lida), ...(lida?.avisos ?? []), ...painel].join(' '),
+      text: [resumoEmTexto(lida), ...lida.avisos, ...painel].join(' '),
     }
   })
 
@@ -249,15 +286,15 @@ export const register: Register = on => {
     }
 
     if (e.surface === 'terminal') {
-      const inicio = atual.dias[0]?.data ?? atual.hoje
-      const fim = atual.dias.at(-1)?.data ?? atual.hoje
+      // Na semana de hoje, o que fazer hoje; em outra, um resumo de cada dia.
+      const linhas = atual.deslocamento ? diasEmLinhas(atual) : hojeEmLinhas(atual)
       return (
         <Box flexDirection="column">
           <Text bold color="#765AA6">
-            {tituloDaSemana(atual.nome)} · {periodo(inicio, fim)}
+            {tituloDaSemana(atual.nome)} · {periodoDaSemana(atual)}
           </Text>
           <Text dimColor>{resumoEmTexto(atual)}</Text>
-          {hojeEmLinhas(atual).map(linha => (
+          {linhas.map(linha => (
             <Text wrap="truncate-end">{linha}</Text>
           ))}
           {atual.avisos.map(aviso => (

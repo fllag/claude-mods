@@ -50,7 +50,18 @@ Feche o Claude Code e abra de novo. Depois escreva `/semana`.
 
 `/semana` abre o painel e responde com um resumo, como "Hoje: 16 tarefas, 2 atrasadas e nenhuma reunião. Semana de 11 a 17 de outubro: 75 tarefas, 3 concluídas e 36 além do ritmo."
 
-O painel se atualiza a cada `/semana` e a cada 15 minutos enquanto estiver aberto. No terminal também tem o botão Atualizar. No app desktop o botão não aparece, porque o app ainda não repassa cliques para mods: rode `/semana` de novo.
+Para ver outra semana, escreva qual depois do comando:
+
+| Comando | Semana |
+|---|---|
+| `/semana` | a de hoje |
+| `/semana proxima` | a que vem |
+| `/semana anterior` | a passada |
+| `/semana +2` ou `/semana -3` | duas para frente, três para trás |
+
+Dá para ir até 4 semanas para trás e 52 para frente. Fora da semana de hoje não tem o bloco Hoje: cada dia mostra as reuniões e as primeiras tarefas. Numa semana passada, mostra o que foi concluído e o que ficou atrasado. O ritmo é sempre o das últimas 4 semanas, contando de hoje.
+
+O painel se atualiza a cada `/semana` e a cada 15 minutos enquanto estiver aberto, sempre na semana que está aberta. `/semana` sozinho volta para a de hoje. No terminal também tem o botão Atualizar. No app desktop o botão não aparece, porque o app ainda não repassa cliques para mods: rode `/semana` de novo.
 
 ## Quando dá erro
 

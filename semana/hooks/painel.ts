@@ -200,6 +200,23 @@ export function periodo(inicio: string, fim: string): string {
     : `${a.dia} de ${MESES[a.mes]} a ${b.dia} de ${MESES[b.mes]}`
 }
 
+/** "próxima semana", "há 2 semanas": qual semana é, contando da de hoje. Null na de hoje. */
+export function nomeDaSemana(deslocamento: number | undefined): string | null {
+  const n = deslocamento ?? 0
+  if (n === 0) return null
+  if (n === 1) return 'próxima semana'
+  if (n === -1) return 'semana passada'
+  return n > 0 ? `daqui a ${n} semanas` : `há ${-n} semanas`
+}
+
+const periodoDe = (semana: Semana) => periodo(semana.dias[0]?.data ?? semana.hoje, semana.dias.at(-1)?.data ?? semana.hoje)
+
+/** O período, com o nome da semana na frente quando não é a de hoje: "próxima semana · 18 a 24 de outubro". */
+export function periodoDaSemana(semana: Semana): string {
+  const nome = nomeDaSemana(semana.deslocamento)
+  return nome === null ? periodoDe(semana) : `${nome} · ${periodoDe(semana)}`
+}
+
 const hora = (minutos: number) =>
   `${String(Math.floor(minutos / 60)).padStart(2, '0')}:${String(minutos % 60).padStart(2, '0')}`
 
@@ -236,16 +253,18 @@ function cabecalho(d: Desenho, semana: Semana, titulo: string) {
   const base = 27
   const util = L - d.margem * 2
   const xTitulo = d.margem + 28
-  const inicio = semana.dias[0]?.data ?? semana.hoje
-  const fim = semana.dias.at(-1)?.data ?? semana.hoje
   const tituloCabe = cortar(titulo, 16, (util - 28) * 0.6, true)
   const xFimDoTitulo = xTitulo + larguraDoTexto(tituloCabe, 16, true)
+  // O nome da semana (próxima, passada) só entra se couber inteiro: a data importa mais.
+  const espaco = L - d.margem - xFimDoTitulo - 12
+  const comNome = periodoDaSemana(semana)
+  const direita = larguraDoTexto(comNome, 12) <= espaco ? comNome : cortar(periodoDe(semana), 12, espaco)
   add(
     d,
     `<path d="M0 ${r}a${r} ${r} 0 0 1 ${r}-${r}h${L - r * 2}a${r} ${r} 0 0 1 ${r} ${r}v${altura - r}H0z" fill="${COR.roxo}"/>`,
     `<path d="${LOGO}" fill="${COR.branco}" transform="translate(${d.margem} ${base - 17}) scale(${22 / 1220})"/>`,
     texto(xTitulo, base, tituloCabe, { tamanho: 16, peso: 700, cor: COR.branco }),
-    texto(L - d.margem, base, cortar(periodo(inicio, fim), 12, L - d.margem - xFimDoTitulo - 12), {
+    texto(L - d.margem, base, direita, {
       tamanho: 12,
       cor: COR.branco,
       opacidade: 0.85,
@@ -439,7 +458,9 @@ function numeros(d: Desenho, semana: Semana) {
     }
   }
   if (c.total === 0) add(d, texto(xEsq, y, 'Nenhuma tarefa nesta semana', { tamanho: 12, classe: 'sec' }))
-  const naLegenda = trechos.filter(t => t.classe !== 'coluna' && (t.n > 0 || t.classe === 'feita'))
+  // As concluídas aparecem mesmo zeradas, menos numa semana que ainda nem começou.
+  const comecou = semana.dias.some(x => x.data <= semana.hoje)
+  const naLegenda = trechos.filter(t => t.classe !== 'coluna' && (t.n > 0 || (t.classe === 'feita' && comecou)))
   for (const t of c.total === 0 ? [] : naLegenda) {
     const larguraDoNumero = larguraDoTexto(String(t.n), 12, true)
     const largura = 14 + larguraDoNumero + 3 + larguraDoTexto(t.rotulo, 12)
@@ -455,10 +476,13 @@ function numeros(d: Desenho, semana: Semana) {
     xl += largura + 14
   }
 
-  // As prioritárias: quando não cabe tudo, é das outras que se tira.
+  // As prioritárias: quando não cabe tudo, é das outras que se tira. Com a
+  // legenda vazia (semana futura que cabe no ritmo), sobem para o lugar dela.
+  const semLegenda = c.total > 0 && naLegenda.length === 0
   const prioritarias = c.urgentes + c.importantes
+  if (semLegenda && prioritarias === 0) y -= 20
   if (prioritarias > 0) {
-    y += 26
+    if (!semLegenda) y += 26
     const marcas: [number, number, string][] = [
       [0, c.urgentes, c.urgentes === 1 ? 'urgente' : 'urgentes'],
       [1, c.importantes, c.importantes === 1 ? 'importante' : 'importantes'],
@@ -807,6 +831,8 @@ type OpcoesDaLista = {
  */
 function listaDoDia(d: Desenho, semana: Semana, dia: Dia, xEsq: number, xDir: number, y: number, o: OpcoesDaLista): number {
   const ehHoje = dia.data === semana.hoje
+  // Só aparece numa semana passada: o que vencia nele e ficou é atrasada.
+  const passou = dia.data < semana.hoje
   const idsDoUpNext = new Set((semana.upNext ?? []).map(t => t.id))
   const reunioes = dia.eventos.filter(ev => ev.comPessoas || ev.diaInteiro)
   const atrasadas = (o.atrasadas ?? []).filter(t => !idsDoUpNext.has(t.id))
@@ -848,7 +874,7 @@ function listaDoDia(d: Desenho, semana: Semana, dia: Dia, xEsq: number, xDir: nu
       hora: e.diaInteiro ? 'dia' : hora(e.inicio),
       titulo: e.titulo,
       dica: `${periodoDaReuniao} · ${e.titulo}`,
-      passado: ehHoje && !e.diaInteiro && e.fim <= semana.agora,
+      passado: passou || (ehHoje && !e.diaInteiro && e.fim <= semana.agora),
     })
   }
   for (const t of atrasadas.slice(0, LIMITE_ATRASADAS)) {
@@ -857,10 +883,14 @@ function listaDoDia(d: Desenho, semana: Semana, dia: Dia, xEsq: number, xDir: nu
   }
   for (const t of tarefas.slice(0, o.limite)) {
     y += 20
-    linha(d, { y, xEsq, xDir, tipo: 'tarefa', titulo: t.titulo, dica: dicaDaTarefa(t) })
+    linha(d, { y, xEsq, xDir, tipo: passou ? 'atrasada' : 'tarefa', titulo: t.titulo, dica: dicaDaTarefa(t) })
   }
   const sobram = [
-    o.limite > 0 && tarefas.length > o.limite ? plural(tarefas.length - o.limite, 'tarefa', 'tarefas') : '',
+    o.limite > 0 && tarefas.length > o.limite
+      ? passou
+        ? plural(tarefas.length - o.limite, 'atrasada', 'atrasadas')
+        : plural(tarefas.length - o.limite, 'tarefa', 'tarefas')
+      : '',
     atrasadas.length > LIMITE_ATRASADAS ? plural(atrasadas.length - LIMITE_ATRASADAS, 'atrasada', 'atrasadas') : '',
   ].filter(Boolean)
   if (sobram.length > 0) {
@@ -921,9 +951,15 @@ function cardDeHoje(d: Desenho, semana: Semana, dia: Dia, faixa: [number, number
   d.y = topo + altura + 22
 }
 
-/** Um dia que ainda vem: nome, resumo e as reuniões; amanhã também as primeiras tarefas. */
+/**
+ * Um dia fora do card de hoje: nome, resumo e as reuniões. Na semana de hoje,
+ * só amanhã lista as primeiras tarefas; em outra semana, todo dia lista: as
+ * primeiras a fazer ou, se o dia já passou, as atrasadas.
+ */
 function blocoDoDia(d: Desenho, semana: Semana, dia: Dia) {
   const ehAmanha = dia.data === diaSeguinte(semana.hoje)
+  const passou = dia.data < semana.hoje
+  const outraSemana = (semana.deslocamento ?? 0) !== 0
   const nome = DIAS[dataPartes(dia.data).semana] ?? ''
   const [rotulo, detalhe] = ehAmanha
     ? ['Amanhã', `${nome}, ${curta(dia.data)}`]
@@ -931,8 +967,9 @@ function blocoDoDia(d: Desenho, semana: Semana, dia: Dia) {
   const xEsq = d.margem
   const xDir = d.largura - d.margem
   let y = d.y + 26
-  tituloDoDia(d, y, xEsq, xDir, rotulo, detalhe, resumoDoDia(dia), 14, 'txt')
-  y = listaDoDia(d, semana, dia, xEsq, xDir, y + 4, { limite: ehAmanha ? LIMITE_AMANHA : 0 })
+  tituloDoDia(d, y, xEsq, xDir, rotulo, detalhe, resumoDoDia(dia, passou ? dia.tarefas.length : 0), 14, 'txt')
+  const limite = passou ? LIMITE_ATRASADAS : ehAmanha || outraSemana ? LIMITE_AMANHA : 0
+  y = listaDoDia(d, semana, dia, xEsq, xDir, y + 4, { limite })
   d.y = y + 22
 }
 
@@ -958,7 +995,8 @@ type OpcoesDoPainel = { largura?: number; titulo?: string }
 
 /**
  * O SVG do painel e suas medidas, para a largura pedida em pixels. A ordem
- * segue o uso: primeiro o que fazer hoje, depois o planejamento da semana.
+ * segue o uso: primeiro o que fazer hoje, depois o planejamento da semana. Em
+ * outra semana não há o card de hoje, e todos os dias ganham seu bloco.
  */
 export function desenharSemana(semana: Semana, opcoes: OpcoesDoPainel = {}): { svg: string; altura: number; largura: number } {
   const largura = Math.round(Math.min(560, Math.max(300, opcoes.largura ?? 400)))
@@ -972,7 +1010,7 @@ export function desenharSemana(semana: Semana, opcoes: OpcoesDoPainel = {}): { s
   d.y += 10
   grafico(d, semana)
   d.y += 4
-  for (const dia of semana.dias.filter(x => x.data > semana.hoje)) {
+  for (const dia of hoje === undefined ? semana.dias : semana.dias.filter(x => x.data > semana.hoje)) {
     divisoria(d)
     blocoDoDia(d, semana, dia)
   }
@@ -1004,6 +1042,15 @@ export function hojeEmLinhas(semana: Semana): string[] {
   ]
 }
 
+/** Cada dia numa linha, para o terminal numa semana que não é a de hoje. */
+export function diasEmLinhas(semana: Semana): string[] {
+  return semana.dias.map(dia => {
+    const passou = dia.data < semana.hoje
+    const partes = resumoDoDia(dia, passou ? dia.tarefas.length : 0)
+    return `${ABREVIADOS[dataPartes(dia.data).semana] ?? ''} ${curta(dia.data)}  ${partes.join(' · ')}`
+  })
+}
+
 /** "a, b e c". */
 const juntar = (itens: string[]) => (itens.length <= 1 ? (itens[0] ?? '') : `${itens.slice(0, -1).join(', ')} e ${itens.at(-1)}`)
 
@@ -1011,16 +1058,19 @@ const juntar = (itens: string[]) => (itens.length <= 1 ? (itens[0] ?? '') : `${i
  * O resumo em texto: a resposta do /semana, o `alt` do SVG e o que o terminal
  * mostra. Hoje primeiro, depois a semana, com as mesmas palavras do painel:
  * "Hoje: 16 tarefas, 2 atrasadas e nenhuma reunião. Semana de 11 a 17 de
- * outubro: 75 tarefas, 3 concluídas e 36 além do ritmo."
+ * outubro: 75 tarefas, 3 concluídas e 36 além do ritmo." Em outra semana, só
+ * ela: "Próxima semana, de 18 a 24 de outubro: 30 tarefas, 12 além do ritmo e
+ * 4 reuniões."
  */
 export function resumoEmTexto(semana: Semana): string {
+  const nome = nomeDaSemana(semana.deslocamento)
+  if (nome !== null) return resumoDeOutraSemana(semana, nome)
+
   const hoje = semana.dias.find(x => x.data === semana.hoje)
   const reunioesHoje = hoje?.eventos.filter(e => e.comPessoas).length ?? 0
   const concluidasHoje = hoje?.concluidas ?? 0
   const tarefasHoje = (hoje?.tarefas.length ?? 0) + concluidasHoje
   const c = cargaDaSemana(semana)
-  const inicio = semana.dias[0]?.data ?? semana.hoje
-  const fim = semana.dias.at(-1)?.data ?? semana.hoje
   const deHoje = [
     (tarefasHoje === 0 ? 'nenhuma tarefa' : plural(tarefasHoje, 'tarefa', 'tarefas')) +
       (concluidasHoje > 0 ? ` (${plural(concluidasHoje, 'concluída', 'concluídas')})` : ''),
@@ -1035,5 +1085,20 @@ export function resumoEmTexto(semana: Semana): string {
           plural(c.feitas, 'concluída', 'concluídas'),
           ...(c.alem > 0 ? [`${c.alem} além do ritmo`] : []),
         ]
-  return `Hoje: ${juntar(deHoje)}. Semana de ${periodo(inicio, fim)}: ${juntar(daSemana)}.`
+  return `Hoje: ${juntar(deHoje)}. Semana de ${periodoDe(semana)}: ${juntar(daSemana)}.`
+}
+
+/** Numa semana passada, o que foi concluído e o que ficou; numa futura, o que passa do ritmo. */
+function resumoDeOutraSemana(semana: Semana, nome: string): string {
+  const c = cargaDaSemana(semana)
+  const passada = (semana.deslocamento ?? 0) < 0
+  const reunioes = semana.dias.flatMap(x => x.eventos).filter(e => e.comPessoas).length
+  const partes = [
+    c.total === 0 ? 'nenhuma tarefa' : plural(c.total, 'tarefa', 'tarefas'),
+    ...(passada && c.total > 0 ? [plural(c.feitas, 'concluída', 'concluídas')] : []),
+    ...(c.atrasadas > 0 ? [plural(c.atrasadas, 'atrasada', 'atrasadas')] : []),
+    ...(c.alem > 0 ? [`${c.alem} além do ritmo`] : []),
+    reunioes === 0 ? 'nenhuma reunião' : plural(reunioes, 'reunião', 'reuniões'),
+  ]
+  return `${nome.charAt(0).toUpperCase()}${nome.slice(1)}, de ${periodoDe(semana)}: ${juntar(partes)}.`
 }
