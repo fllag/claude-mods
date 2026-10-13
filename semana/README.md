@@ -7,13 +7,13 @@ Um painel com a sua semana, de domingo a sábado: as reuniões do Google Calenda
 ## O que aparece
 
 - **Topo:** o total de tarefas da semana, as horas em reunião e uma barra que divide o total em concluídas, atrasadas, a fazer e o que passa do seu ritmo.
-- **Hoje:** o que está acontecendo agora, a próxima reunião, o Up next, as atrasadas e as tarefas do dia.
+- **Hoje:** o que está acontecendo agora, a próxima reunião, o Up next e as 3 tarefas mais prioritárias entre as atrasadas e as do dia. O resto aparece só na conta, como "+ 12 tarefas e 4 atrasadas".
 - **Tarefas por dia:** um gráfico da semana com a linha do seu ritmo. O que passa dela aparece listrado: é de onde tirar tarefa.
 - **Próximos dias:** as reuniões de cada dia e quantas tarefas vencem.
 
 O **ritmo** é a média de tarefas que você concluiu por dia útil nas últimas 4 semanas. Semana sem nenhuma concluída (férias, por exemplo) fica de fora. Na primeira vez o painel lê seu histórico do Basecamp, o que leva uns 10 segundos. Depois só busca o que é novo.
 
-**Prioridade:** comece o título da tarefa no Basecamp com 🔴 para urgente ou 🟢 para importante. Ela sobe na lista e ganha uma bolinha colorida no painel. Não usa ícone? Tudo funciona igual, só sem esse destaque.
+**Prioridade:** comece o título da tarefa no Basecamp com 🔴 para urgente ou 🟢 para importante. Ela sobe na lista e ganha uma bolinha colorida no painel. Não usa ícone? Tudo funciona igual, só sem esse destaque. No Hoje, a escolha das 3 segue essa ordem: primeiro 🔴, depois 🟢, depois o resto. Empatou, vem a atrasada há mais tempo, e só então as que vencem hoje.
 
 O título é o seu primeiro nome no Basecamp, ao lado do período da semana. Sem o Basecamp, fica "Minha semana".
 

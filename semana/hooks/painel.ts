@@ -1,7 +1,7 @@
 // Desenha a Semana como um SVG na identidade da Hospedin. Função pura: não
 // conhece o Claude Code, então roda igual no mod, nos testes e na prévia.
 import type { Dia, Prioridade, Semana, Tarefa } from '../types'
-import { importancia, semMarcaDePrioridade } from './dados'
+import { importancia, porPrioridade, semMarcaDePrioridade } from './dados'
 
 const COR = {
   roxo: '#765AA6',
@@ -230,7 +230,10 @@ function faixaDeHoras(dias: Dia[]): [number, number] {
   return [inicio * 60, Math.min(24, fim) * 60]
 }
 
-/** Quantas tarefas listar por dia: hoje e amanhã pedem ação, o resto só conta. */
+/**
+ * Quantas tarefas listar por dia: hoje e amanhã pedem ação, o resto só conta.
+ * No de hoje, as atrasadas entram na mesma conta.
+ */
 const LIMITE_HOJE = 3
 const LIMITE_AMANHA = 3
 const LIMITE_ATRASADAS = 3
@@ -698,6 +701,37 @@ function linha(d: Desenho, l: Linha) {
 
 const dicaDaTarefa = (t: Tarefa | Prioridade) => (t.projeto ? `${t.titulo} · ${t.projeto}` : t.titulo)
 
+/** Na semana mostrada, o dia abreviado ("qui"); fora dela, a data ("8 out"). */
+function quando(semana: Semana, data: string): string {
+  const domingo = semana.dias[0]?.data ?? semana.hoje
+  const sabado = semana.dias.at(-1)?.data ?? semana.hoje
+  return data >= domingo && data <= sabado ? (ABREVIADOS[dataPartes(data).semana] ?? curta(data)) : curta(data)
+}
+
+/**
+ * As tarefas que a lista de um dia mostra: as atrasadas e as do dia disputam
+ * as mesmas vagas, e entram as mais prioritárias. Diz também quantas de cada
+ * ficaram de fora.
+ */
+function escolherTarefas(atrasadas: Tarefa[], tarefas: Tarefa[], limite: number) {
+  const escolhidas = porPrioridade([...atrasadas, ...tarefas]).slice(0, limite)
+  const naLista = new Set(escolhidas.map(t => t.id))
+  return {
+    escolhidas,
+    tarefasDeFora: tarefas.filter(t => !naLista.has(t.id)).length,
+    atrasadasDeFora: atrasadas.filter(t => !naLista.has(t.id)).length,
+  }
+}
+
+/** "+ 10 tarefas e 3 atrasadas": o que ficou de fora da lista; vazio se nada ficou. */
+function oQueSobra(tarefas: number, atrasadas: number, passou = false): string {
+  const partes = [
+    tarefas > 0 ? (passou ? plural(tarefas, 'atrasada', 'atrasadas') : plural(tarefas, 'tarefa', 'tarefas')) : '',
+    atrasadas > 0 ? plural(atrasadas, 'atrasada', 'atrasadas') : '',
+  ].filter(Boolean)
+  return partes.length > 0 ? `+ ${partes.join(' e ')}` : ''
+}
+
 function trilha(d: Desenho, dia: Dia, y: number, xEsq: number, xDir: number, faixa: [number, number], agora: number | null, emCard: boolean) {
   const largura = xDir - xEsq
   const [ini, fim] = faixa
@@ -828,9 +862,10 @@ type OpcoesDaLista = {
 
 /**
  * As linhas de um dia. No de hoje, primeiro o Up next, com qualquer data e uma
- * linha fina separando do resto; depois as reuniões, as atrasadas, com o dia
- * em que venceram, e as tarefas. Uma tarefa do Up next não se repete nas
- * outras listas. Devolve onde a última linha terminou.
+ * linha fina separando do resto; depois as reuniões e as tarefas mais
+ * prioritárias entre as atrasadas, com o dia em que venceram, e as do dia. Uma
+ * tarefa do Up next não se repete nas outras listas. Devolve onde a última
+ * linha terminou.
  */
 function listaDoDia(d: Desenho, semana: Semana, dia: Dia, xEsq: number, xDir: number, y: number, o: OpcoesDaLista): number {
   const ehHoje = dia.data === semana.hoje
@@ -840,11 +875,7 @@ function listaDoDia(d: Desenho, semana: Semana, dia: Dia, xEsq: number, xDir: nu
   const reunioes = dia.eventos.filter(ev => ev.comPessoas || ev.diaInteiro)
   const atrasadas = (o.atrasadas ?? []).filter(t => !idsDoUpNext.has(t.id))
   const tarefas = dia.tarefas.filter(t => !idsDoUpNext.has(t.id))
-  // Na semana, o dia abreviado ("qui"); fora dela, a data ("8 out").
-  const domingo = semana.dias[0]?.data ?? semana.hoje
-  const sabado = semana.dias.at(-1)?.data ?? semana.hoje
-  const quando = (data: string) =>
-    data >= domingo && data <= sabado ? (ABREVIADOS[dataPartes(data).semana] ?? curta(data)) : curta(data)
+  const { escolhidas, tarefasDeFora, atrasadasDeFora } = escolherTarefas(atrasadas, tarefas, o.limite)
 
   const upNext = o.upNext ?? []
   if (upNext.length > 0) {
@@ -853,7 +884,8 @@ function listaDoDia(d: Desenho, semana: Semana, dia: Dia, xEsq: number, xDir: nu
     for (const t of upNext.slice(0, LIMITE_UP_NEXT)) {
       y += 20
       const atrasada = t.vence !== null && t.vence < semana.hoje
-      const direita = t.vence === null ? null : atrasada ? `venceu ${quando(t.vence)}` : t.vence === semana.hoje ? 'hoje' : quando(t.vence)
+      const direita =
+        t.vence === null ? null : atrasada ? `venceu ${quando(semana, t.vence)}` : t.vence === semana.hoje ? 'hoje' : quando(semana, t.vence)
       linha(d, {
         y, xEsq, xDir, tipo: atrasada ? 'atrasada' : 'tarefa', titulo: t.titulo, dica: dicaDaTarefa(t),
         ...(direita === null ? {} : { direita }),
@@ -863,7 +895,7 @@ function listaDoDia(d: Desenho, semana: Semana, dia: Dia, xEsq: number, xDir: nu
       y += 19
       add(d, texto(xEsq + 16, y, `+ ${upNext.length - LIMITE_UP_NEXT} no Up next`, { tamanho: 12, classe: 'sec' }))
     }
-    if (reunioes.length + atrasadas.length + Math.min(tarefas.length, o.limite) > 0) {
+    if (reunioes.length + escolhidas.length > 0) {
       y += 12
       add(d, `<line x1="${xEsq}" x2="${xDir}" y1="${y}" y2="${y}" class="linha" stroke-width="1"/>`)
     }
@@ -880,25 +912,19 @@ function listaDoDia(d: Desenho, semana: Semana, dia: Dia, xEsq: number, xDir: nu
       passado: passou || (ehHoje && !e.diaInteiro && e.fim <= semana.agora),
     })
   }
-  for (const t of atrasadas.slice(0, LIMITE_ATRASADAS)) {
+  for (const t of escolhidas) {
     y += 20
-    linha(d, { y, xEsq, xDir, tipo: 'atrasada', titulo: t.titulo, dica: dicaDaTarefa(t), direita: `venceu ${quando(t.vence)}` })
+    const venceuAntes = t.vence < dia.data
+    linha(d, {
+      y, xEsq, xDir, tipo: passou || venceuAntes ? 'atrasada' : 'tarefa', titulo: t.titulo, dica: dicaDaTarefa(t),
+      ...(venceuAntes ? { direita: `venceu ${quando(semana, t.vence)}` } : {}),
+    })
   }
-  for (const t of tarefas.slice(0, o.limite)) {
-    y += 20
-    linha(d, { y, xEsq, xDir, tipo: passou ? 'atrasada' : 'tarefa', titulo: t.titulo, dica: dicaDaTarefa(t) })
-  }
-  const sobram = [
-    o.limite > 0 && tarefas.length > o.limite
-      ? passou
-        ? plural(tarefas.length - o.limite, 'atrasada', 'atrasadas')
-        : plural(tarefas.length - o.limite, 'tarefa', 'tarefas')
-      : '',
-    atrasadas.length > LIMITE_ATRASADAS ? plural(atrasadas.length - LIMITE_ATRASADAS, 'atrasada', 'atrasadas') : '',
-  ].filter(Boolean)
-  if (sobram.length > 0) {
+  // Num dia que só lista as reuniões, as tarefas já estão no resumo do título.
+  const sobra = oQueSobra(o.limite > 0 ? tarefasDeFora : 0, atrasadasDeFora, passou)
+  if (sobra !== '') {
     y += 19
-    add(d, texto(xEsq + 16, y, `+ ${sobram.join(' e ')}`, { tamanho: 12, classe: 'sec' }))
+    add(d, texto(xEsq + 16, y, sobra, { tamanho: 12, classe: 'sec' }))
   }
   return y
 }
@@ -1036,12 +1062,15 @@ export function hojeEmLinhas(semana: Semana): string[] {
   if (hoje === undefined) return []
   const upNext = semana.upNext ?? []
   const idsDoUpNext = new Set(upNext.map(t => t.id))
+  const atrasadas = semana.atrasadas.filter(t => !idsDoUpNext.has(t.id))
   const tarefas = hoje.tarefas.filter(t => !idsDoUpNext.has(t.id))
+  const { escolhidas, tarefasDeFora, atrasadasDeFora } = escolherTarefas(atrasadas, tarefas, LIMITE_HOJE)
+  const sobra = oQueSobra(tarefasDeFora, atrasadasDeFora)
   return [
     ...upNext.slice(0, LIMITE_UP_NEXT).map(t => `Up next · ${t.titulo}`),
     ...hoje.eventos.filter(e => e.comPessoas || e.diaInteiro).map(e => `● ${e.diaInteiro ? 'dia todo' : hora(e.inicio)}  ${e.titulo}`),
-    ...tarefas.slice(0, LIMITE_HOJE).map(t => `○ ${t.titulo}`),
-    ...(tarefas.length > LIMITE_HOJE ? [`  + ${plural(tarefas.length - LIMITE_HOJE, 'tarefa', 'tarefas')}`] : []),
+    ...escolhidas.map(t => `○ ${t.titulo}${t.vence < hoje.data ? ` · venceu ${quando(semana, t.vence)}` : ''}`),
+    ...(sobra === '' ? [] : [`  ${sobra}`]),
   ]
 }
 
