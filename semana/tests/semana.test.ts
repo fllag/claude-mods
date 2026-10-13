@@ -2,7 +2,7 @@ import { expect, mock, test } from 'claude-code/testing'
 import type { On } from 'claude-code'
 
 import { importancia, lerConclusoes, lerDeslocamento, montarSemana, primeiroNome, semMarcaDePrioridade } from '../hooks/dados'
-import { alemDoRitmo, cargaDaSemana, desenharSemana, duracao, tituloDaSemana } from '../hooks/painel'
+import { alemDoRitmo, cargaDaSemana, desenharSemana, duracao, hojeEmLinhas, tituloDaSemana } from '../hooks/painel'
 
 // Terça, 13 de outubro de 2026, 10:15 no horário local.
 const AGORA = new Date(2026, 9, 13, 10, 15).getTime()
@@ -391,8 +391,9 @@ test('a barra do topo soma a semana e conta as prioritárias', () => {
   // Nas listas o emoji sai do título e vira a cor da bolinha.
   expect(svg).toContain('>atrasada desta semana</text>')
   expect(svg).toContain('>t0</text>')
-  // Hoje mostra no máximo 3 tarefas: das 10 de quinta, sobram 7.
-  expect(svg).toContain('>+ 7 tarefas</text>')
+  // Hoje mostra no máximo 3 tarefas, atrasadas incluídas: a 🔴 atrasada e
+  // duas 🟢 de quinta. Das 10 de quinta sobram 8; das 2 atrasadas, 1.
+  expect(svg).toContain('>+ 8 tarefas e 1 atrasada</text>')
 
   // Sem ritmo não há o que passe dele: sem traço, sem listras, sem veredito.
   const semRitmo = desenharSemana({ ...semana, ritmo: null }, { largura: 400 }).svg
@@ -493,6 +494,45 @@ test('as concluídas contam no dia em que foram concluídas, pela linha do tempo
       contaBasecamp: null,
     }
   }
+})
+
+test('com atrasadas, hoje lista só as 3 mais prioritárias entre elas e as do dia', () => {
+  const tarefa = (id: number, vence: string, titulo: string) => ({ id, titulo, projeto: '', vence })
+  const semana = montarSemana({
+    agoraMs: AGORA, // terça, 13
+    eventos: new Map(),
+    tarefas: [
+      tarefa(1, '2026-10-02', 'Atrasada antiga'),
+      tarefa(2, '2026-10-09', '🟢 Atrasada importante'),
+      tarefa(3, '2026-10-12', 'Atrasada de ontem'),
+      ...[4, 5, 6].map(id => tarefa(id, '2026-10-12', `Outra atrasada ${id}`)),
+      tarefa(7, '2026-10-13', 'Comum de hoje'),
+      tarefa(8, '2026-10-13', '🔴 Urgente de hoje'),
+      ...[9, 10, 11].map(id => tarefa(id, '2026-10-13', `Mais uma de hoje ${id}`)),
+    ],
+    avisos: [],
+    contaBasecamp: null,
+  })
+
+  // Primeiro a importância; no mesmo grau, a que venceu há mais tempo.
+  const { svg } = desenharSemana(semana, { largura: 400 })
+  expect(svg).toContain('>Urgente de hoje</text>')
+  expect(svg).toContain('>Atrasada importante</text>')
+  expect(svg).toContain('>Atrasada antiga</text>')
+  expect(svg).toContain('>venceu 2 out</text>')
+  expect(svg).not.toContain('>Atrasada de ontem</text>')
+  expect(svg).not.toContain('>Comum de hoje</text>')
+  expect(svg).toContain('>+ 4 tarefas e 4 atrasadas</text>')
+  // O título do card continua contando tudo.
+  expect(svg).toContain('>5 tarefas · 6 atrasadas</text>')
+
+  // No terminal, as mesmas 3, na mesma ordem.
+  expect(hojeEmLinhas(semana)).toEqual([
+    '○ 🔴 Urgente de hoje',
+    '○ 🟢 Atrasada importante · venceu 9 out',
+    '○ Atrasada antiga · venceu 2 out',
+    '  + 4 tarefas e 4 atrasadas',
+  ])
 })
 
 test('o Up next abre o dia, conta pela data e não se repete nas listas', () => {
