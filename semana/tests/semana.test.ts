@@ -1,7 +1,7 @@
 import { expect, mock, test } from 'claude-code/testing'
 import type { On } from 'claude-code'
 
-import { importancia, lerConclusoes, montarSemana, primeiroNome, semMarcaDePrioridade } from '../hooks/dados'
+import { importancia, lerConclusoes, lerDeslocamento, montarSemana, primeiroNome, semMarcaDePrioridade } from '../hooks/dados'
 import { alemDoRitmo, cargaDaSemana, desenharSemana, duracao, tituloDaSemana } from '../hooks/painel'
 
 // Terça, 13 de outubro de 2026, 10:15 no horário local.
@@ -26,6 +26,12 @@ const AGENDA = {
       end: { dateTime: '2026-10-14T10:00:00-03:00' },
       attendees: [{ self: true, responseStatus: 'declined' }, { email: 'bia@exemplo.com' }],
     },
+    {
+      summary: 'Reunião com a diretoria',
+      start: { dateTime: '2026-10-20T10:00:00-03:00' },
+      end: { dateTime: '2026-10-20T11:00:00-03:00' },
+      attendees: [{ self: true, responseStatus: 'accepted' }, { email: 'cris@exemplo.com' }],
+    },
   ],
 }
 
@@ -34,6 +40,11 @@ const TAREFAS: Record<string, unknown[]> = {
   overdue: [{ id: 1, content: 'Revisão semanal', due_on: '2026-10-09', bucket: { name: 'Pessoal' }, app_url: URL_TAREFA }],
   due_today: [{ id: 2, content: 'Fechar proposta', due_on: '2026-10-13', bucket: { name: 'Comercial' }, app_url: URL_TAREFA }],
   due_tomorrow: [{ id: 3, content: 'Revisar contrato', due_on: '2026-10-14', bucket: { name: 'Jurídico' }, app_url: URL_TAREFA }],
+  due_next_week: [
+    { id: 4, content: 'Apresentar resultados', due_on: '2026-10-20', bucket: { name: 'Pessoal' }, app_url: URL_TAREFA },
+    { id: 5, content: 'Renovar contrato', due_on: '2026-10-22', bucket: { name: 'Jurídico' }, app_url: URL_TAREFA },
+  ],
+  due_later: [{ id: 6, content: 'Planejar dezembro', due_on: '2026-11-03', bucket: { name: 'Pessoal' }, app_url: URL_TAREFA }],
 }
 
 // Feitas: duas desta semana e oito da semana passada (segunda a sexta).
@@ -67,8 +78,12 @@ type Mundo = {
   basecamp?: 'ok' | 'ausente' | 'sem-login'
 }
 
-/** Agenda, Basecamp e o resto do Claude Code respondendo de memória. */
+/**
+ * Agenda, Basecamp e o resto do Claude Code respondendo de memória. Devolve o
+ * que foi pedido: os dias lidos da agenda e os escopos do Basecamp.
+ */
 function mundo(on: On, { agenda: agendaFunciona = true, basecamp = 'ok' }: Mundo = {}) {
+  const pedidos = { dias: [] as string[], escopos: [] as string[] }
   mock.clock(on, { now: AGORA })
   mock.store(on)
   mock.env(on, { HOME: '/Users/teste' })
@@ -78,16 +93,18 @@ function mundo(on: On, { agenda: agendaFunciona = true, basecamp = 'ok' }: Mundo
       { name: 'mcp__agenda__list_calendars', description: 'Lista agendas', mcp: true },
     ],
   }))
-  on('mcp.call', ($, e) => ({
-    value:
+  on('mcp.call', ($, e) => {
+    if (e.tool === 'list_events') pedidos.dias.push(String(e.args.startTime).slice(0, 10))
+    return { value:
       agendaFunciona && e.server === 'agenda' && e.tool === 'list_events'
         ? { content: [{ type: 'text', text: JSON.stringify(AGENDA) }], isError: false }
-        : { content: [{ type: 'text', text: 'indisponível' }], isError: true },
-  }))
+        : { content: [{ type: 'text', text: 'indisponível' }], isError: true } }
+  })
   on('process.run', ($, e) => {
     if (basecamp === 'ausente') throw new Error(`spawn ${e.argv[0]} ENOENT`)
     if (basecamp === 'sem-login') return { value: { exitCode: 1, stdout: '', stderr: 'not authenticated' } }
     const [, grupo, sub, escopo] = e.argv
+    if (grupo === 'assignments' && sub === 'due') pedidos.escopos.push(escopo ?? '')
     // A linha do tempo vem com --agent: só os dados, sem o envelope.
     const stdout =
       grupo === 'timeline'
@@ -106,6 +123,7 @@ function mundo(on: On, { agenda: agendaFunciona = true, basecamp = 'ok' }: Mundo
     return { value: { exitCode: 0, stdout, stderr: '' } }
   })
   on('ui.open', () => ({ value: { isPlaced: true } }))
+  return pedidos
 }
 
 const PAINEL = {
@@ -513,4 +531,136 @@ test('o título é só o primeiro nome do Basecamp', () => {
   expect(tituloDaSemana(null)).toBe('Minha semana')
   // Leitura salva por versão anterior, sem o campo.
   expect(tituloDaSemana(undefined)).toBe('Minha semana')
+})
+
+test('/semana proxima lê a semana que vem, sem o bloco de hoje', async ($, on) => {
+  const pedidos = mundo(on)
+  const { text } = await $.command.run({ command: 'semana', args: 'próxima' })
+
+  // A agenda de domingo a sábado da semana que vem, o domingo primeiro, e os
+  // escopos do Basecamp depois desta semana.
+  expect(pedidos.dias[0]).toBe('2026-10-18')
+  expect([...pedidos.dias].sort()).toEqual([
+    '2026-10-18', '2026-10-19', '2026-10-20', '2026-10-21', '2026-10-22', '2026-10-23', '2026-10-24',
+  ])
+  expect([...pedidos.escopos].sort()).toEqual(['due_later', 'due_next_week', 'due_tomorrow'])
+  // Sem atrasadas nem Up next: são de hoje. 2 tarefas cabem no ritmo de ~8 em 5 dias úteis.
+  expect(text).toBe('Próxima semana, de 18 a 24 de outubro: 2 tarefas e 1 reunião.')
+
+  const desktop = await $.ui.mount({ ...PAINEL, surface: 'desktop' })
+  const svg = String((await desktop.find({ type: 'Svg' }))?.props.source)
+  expect(svg).toContain('>próxima semana · 18 a 24 de outubro</text>')
+  expect(svg).not.toContain('>Hoje</text>')
+  expect(svg).not.toContain('>Up next</text>')
+  expect(svg).not.toContain('Revisão semanal')
+  // Todos os dias ganham bloco, com as reuniões e quantas tarefas vencem.
+  expect(svg).toContain('>Domingo</text>')
+  expect(svg).toContain('>Reunião com a diretoria</text>')
+  expect(svg).toContain('>1 reunião · 1 tarefa</text>')
+  // Em outra semana todo dia lista as primeiras tarefas, não só amanhã.
+  expect(svg).toContain('>Apresentar resultados</text>')
+  expect(svg).toContain('2 tarefas: 0 concluídas, 0 atrasadas e 2 a fazer até sábado')
+  // Uma semana que nem começou não tem o que ter concluído: a legenda não fala disso.
+  expect(svg).not.toContain('>concluídas</text>')
+  expect(svg).toContain('seu ritmo: 2 por dia útil')
+  await desktop.unmount()
+
+  // No terminal, um resumo de cada dia; o Atualizar relê a mesma semana.
+  const terminal = await $.ui.mount({ ...PAINEL, surface: 'terminal' })
+  expect(await terminal.find({ type: 'Text', text: /^Ana · próxima semana · 18 a 24 de outubro/ })).toBeDefined()
+  expect(await terminal.find({ type: 'Text', text: /^ter 20 out {2}1 reunião · 1 tarefa$/ })).toBeDefined()
+  pedidos.dias.length = 0
+  await terminal.press({ key: 'atualizar' })
+  expect(pedidos.dias).toContain('2026-10-18')
+  expect(pedidos.dias).not.toContain('2026-10-13')
+  expect(await terminal.find({ type: 'Text', text: /^Ana · próxima semana/ })).toBeDefined()
+  await terminal.unmount()
+
+  // /semana sozinho volta para a semana de hoje.
+  expect((await $.command.run({ command: 'semana', args: '' })).text).toBe(RESUMO)
+})
+
+test('/semana anterior mostra o que foi concluído e o que ficou para trás', async ($, on) => {
+  const pedidos = mundo(on)
+  const { text } = await $.command.run({ command: 'semana', args: 'anterior' })
+
+  // As pendentes de uma semana passada estão todas em overdue.
+  expect(pedidos.escopos).toEqual(['overdue'])
+  // 8 concluídas de segunda a sexta; atrasadas, só as que venciam nela: a de
+  // sexta e a do Up next, que venceu na segunda.
+  expect(text).toBe('Semana passada, de 4 a 10 de outubro: 10 tarefas, 8 concluídas, 2 atrasadas e nenhuma reunião.')
+
+  const ui = await $.ui.mount({ ...PAINEL, surface: 'desktop' })
+  const svg = String((await ui.find({ type: 'Svg' }))?.props.source)
+  expect(svg).toContain('>semana passada · 4 a 10 de outubro</text>')
+  expect(svg).not.toContain('>Hoje</text>')
+  // Cada dia diz o que foi feito e lista o que ficou.
+  expect(svg).toContain('>5 tarefas · 4 concluídas · 1 atrasada</text>')
+  expect(svg).toContain('>Revisão semanal</text>')
+  expect(svg).toContain('>Revisar metas do trimestre</text>')
+  await ui.unmount()
+})
+
+test('/semana +3 busca as tarefas mais adiante', async ($, on) => {
+  const pedidos = mundo(on)
+  const { text } = await $.command.run({ command: 'semana', args: '+3' })
+  expect(pedidos.dias[0]).toBe('2026-11-01')
+  expect(text).toBe('Daqui a 3 semanas, de 1 a 7 de novembro: 1 tarefa e nenhuma reunião.')
+})
+
+test('/semana com argumento que não entende, ou longe demais, explica e não lê nada', async ($, on) => {
+  const pedidos = mundo(on)
+  expect((await $.command.run({ command: 'semana', args: 'amanhã' })).text).toBe(
+    'Não entendi "amanhã". Use /semana, /semana proxima, /semana anterior ou /semana +2.',
+  )
+  expect((await $.command.run({ command: 'semana', args: '-5' })).text).toBe(
+    'Dá para ver até 4 semanas para trás e 52 para frente.',
+  )
+  expect(pedidos.dias).toEqual([])
+
+  expect(lerDeslocamento('')).toBe(0)
+  expect(lerDeslocamento(' Atual ')).toBe(0)
+  expect(lerDeslocamento('próxima semana')).toBe(1)
+  expect(lerDeslocamento('PROXIMA')).toBe(1)
+  expect(lerDeslocamento('semana que vem')).toBe(1)
+  expect(lerDeslocamento('semana passada')).toBe(-1)
+  expect(lerDeslocamento('anterior')).toBe(-1)
+  expect(lerDeslocamento('+2')).toBe(2)
+  expect(lerDeslocamento('2')).toBe(2)
+  expect(lerDeslocamento('- 3')).toBe(-3)
+  expect(lerDeslocamento('-0')).toBe(0)
+  expect(lerDeslocamento('2026-10-20')).toBeNull()
+})
+
+test('outra semana muda os dias, mas o ritmo continua o das últimas 4 semanas', () => {
+  const tarefa = (id: number, vence: string) => ({ id, titulo: `t${id}`, projeto: '', vence })
+  const base = {
+    agoraMs: new Date(2026, 9, 13, 9, 0).getTime(), // terça, 13 de outubro
+    eventos: new Map(),
+    tarefas: [tarefa(1, '2026-09-30'), tarefa(2, '2026-10-06'), tarefa(3, '2026-10-12'), tarefa(4, '2026-10-20')],
+    concluidas: Array.from({ length: 10 }, (_, i) => tarefa(100 + i, `2026-10-0${5 + (i % 5)}`)),
+    upNext: [{ id: 9, titulo: 'Sem data', projeto: '', vence: null }],
+    avisos: [],
+    contaBasecamp: null,
+  }
+  const atual = montarSemana(base)
+  const passada = montarSemana({ ...base, deslocamento: -1 })
+  const proxima = montarSemana({ ...base, deslocamento: 1 })
+
+  expect(passada.dias.map(d => d.data)).toEqual([
+    '2026-10-04', '2026-10-05', '2026-10-06', '2026-10-07', '2026-10-08', '2026-10-09', '2026-10-10',
+  ])
+  expect(proxima.dias[0]?.data).toBe('2026-10-18')
+  expect(passada.ritmo).toBe(atual.ritmo)
+  expect(proxima.ritmo).toBe(atual.ritmo)
+  expect(passada.hoje).toBe('2026-10-13')
+
+  // Na de hoje, todas as atrasadas; numa passada, só as dela; numa futura, nenhuma.
+  expect(atual.atrasadas.map(t => t.id)).toEqual([1, 2, 3])
+  expect(passada.atrasadas.map(t => t.id)).toEqual([2])
+  expect(proxima.atrasadas).toEqual([])
+  // O Up next é do bloco Hoje.
+  expect(atual.upNext?.length).toBe(1)
+  expect(proxima.upNext).toEqual([])
+  expect(proxima.deslocamento).toBe(1)
 })

@@ -11,6 +11,45 @@ export const DIAS_NA_JANELA = 7
  */
 export const ESCOPOS_BASECAMP = ['overdue', 'due_today', 'due_tomorrow', 'due_later_this_week'] as const
 
+/**
+ * Os escopos que cobrem a semana pedida. Uma passada só tem pendentes em
+ * `overdue`; uma futura pode estar em qualquer escopo depois desta semana. O
+ * `montarSemana` filtra pela data, então sobrar não faz mal; faltar faria.
+ */
+export function escoposDoBasecamp(deslocamento: number): readonly string[] {
+  if (deslocamento < 0) return ['overdue']
+  if (deslocamento === 0) return ESCOPOS_BASECAMP
+  return ['due_tomorrow', 'due_next_week', 'due_later']
+}
+
+/**
+ * Até onde o /semana vai para frente: um ano. Para trás vai até
+ * SEMANAS_DO_RITMO, porque é o que o painel guarda das concluídas.
+ */
+export const SEMANAS_PARA_FRENTE = 52
+
+/**
+ * Quantas semanas depois da de hoje o `/semana <args>` pede: nada é a de hoje,
+ * "proxima" é 1, "anterior" é -1 e "+2" ou "-3" contam semanas. Acento,
+ * maiúscula e a palavra "semana" não importam. Null quando não entende.
+ */
+export function lerDeslocamento(args: string): number | null {
+  const texto = args
+    .normalize('NFD')
+    .replace(/[̀-ͯ]/g, '')
+    .toLowerCase()
+    .replace(/\bsemanas?\b/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim()
+  if (['', 'atual', 'esta', 'essa', 'hoje', '0'].includes(texto)) return 0
+  if (['proxima', 'seguinte', 'que vem'].includes(texto)) return 1
+  if (['anterior', 'passada'].includes(texto)) return -1
+  const numero = texto.replace(/\s/g, '').match(/^([+-]?)(\d{1,3})$/)
+  if (numero === null) return null
+  const n = Number(numero[2])
+  return numero[1] === '-' && n > 0 ? -n : n
+}
+
 const SERVIDORES_AGENDA = ['claude.ai Google Calendar', 'Google Calendar']
 
 /**
@@ -288,9 +327,14 @@ const DIAS_UTEIS = 5
 /** Quantas semanas para trás formam o ritmo. */
 export const SEMANAS_DO_RITMO = 4
 
-/** Junta tudo na semana de domingo a sábado que contém hoje, mais as atrasadas e o Up next. */
+/**
+ * Junta tudo numa semana de domingo a sábado: a de hoje, com as atrasadas e o
+ * Up next, ou outra, `deslocamento` semanas antes ou depois.
+ */
 export function montarSemana(args: {
   agoraMs: number
+  /** Quantas semanas depois da de hoje; 0 quando não vem. */
+  deslocamento?: number
   eventos: Map<string, Evento[]>
   tarefas: Tarefa[]
   /** Minhas tarefas concluídas recentes; sem elas, nada de concluídas nem de ritmo. */
@@ -318,7 +362,11 @@ export function montarSemana(args: {
       : concluidas.flatMap(t => args.conclusoes?.dias[String(t.id)] ?? [])
   const concluidasEm = (data: string) => diasDeConclusao.filter(dia => dia === data).length
   const hoje = dataLocal(args.agoraMs)
-  const domingo = domingoDa(hoje)
+  const deslocamento = args.deslocamento ?? 0
+  // O ritmo conta da semana de hoje, qualquer que seja a semana mostrada.
+  const domingoDeHoje = domingoDa(hoje)
+  const domingo = somarDias(domingoDeHoje, 7 * deslocamento)
+  const sabado = somarDias(domingo, DIAS_NA_JANELA - 1)
   const agora = new Date(args.agoraMs)
   const dias: Dia[] = []
 
@@ -337,18 +385,23 @@ export function montarSemana(args: {
   // cobre inteira, fica de fora, para não puxar a média para baixo.
   const cobertura = args.conclusoes?.cobertura ?? '0000-01-01'
   const feitasPorSemana = Array.from({ length: SEMANAS_DO_RITMO }, (_, s) => {
-    const domingoDaSemana = somarDias(domingo, -7 * (s + 1))
+    const domingoDaSemana = somarDias(domingoDeHoje, -7 * (s + 1))
     if (somarDias(domingoDaSemana, 1) < cobertura) return 0
     return Array.from({ length: DIAS_UTEIS }, (_, i) => concluidasEm(somarDias(domingoDaSemana, i + 1))).reduce((a, b) => a + b, 0)
   }).filter(n => n > 0)
   const totalFeito = feitasPorSemana.reduce((a, b) => a + b, 0)
 
+  // Fora da semana de hoje, as atrasadas são só as da semana mostrada, e o Up
+  // next, que é do bloco Hoje, fica de fora.
+  const daSemana = (t: Tarefa) => deslocamento === 0 || (t.vence >= domingo && t.vence <= sabado)
+
   return {
     hoje,
+    deslocamento,
     agora: agora.getHours() * 60 + agora.getMinutes(),
     dias,
-    atrasadas: porImportancia(tarefas.filter(t => t.vence < hoje)),
-    upNext,
+    atrasadas: porImportancia(tarefas.filter(t => t.vence < hoje && daSemana(t))),
+    upNext: deslocamento === 0 ? upNext : [],
     ritmo: feitasPorSemana.length > 0 ? totalFeito / (feitasPorSemana.length * DIAS_UTEIS) : null,
     atualizadoEm: `${dois(agora.getHours())}:${dois(agora.getMinutes())}`,
     avisos: args.avisos,
