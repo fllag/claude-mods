@@ -594,8 +594,10 @@ test('/semana anterior mostra o que foi concluído e o que ficou para trás', as
   const svg = String((await ui.find({ type: 'Svg' }))?.props.source)
   expect(svg).toContain('>semana passada · 4 a 10 de outubro</text>')
   expect(svg).not.toContain('>Hoje</text>')
-  // Cada dia diz o que foi feito e lista o que ficou.
-  expect(svg).toContain('>5 tarefas · 4 concluídas · 1 atrasada</text>')
+  // Cada dia diz quantas tinha e quantas ficaram, e lista as que ficaram; as
+  // concluídas ficam no gráfico, não na linha do dia.
+  expect(svg).toContain('>5 tarefas · 1 atrasada</text>')
+  expect(svg).not.toMatch(/>[^<]*\d concluídas?[^<]*<\/text>/)
   expect(svg).toContain('>Revisão semanal</text>')
   expect(svg).toContain('>Revisar metas do trimestre</text>')
   await ui.unmount()
