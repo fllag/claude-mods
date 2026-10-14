@@ -103,16 +103,20 @@ type Mundo = {
   agenda?: boolean
   /** `ausente`: a CLI não está instalada; `sem-login`: roda, mas responde com erro. */
   basecamp?: 'ok' | 'ausente' | 'sem-login'
+  /** Quantas leituras da linha do tempo falham antes de uma dar certo. */
+  falhasDaLinhaDoTempo?: number
+  /** O que o mod já tinha guardado. */
+  guardado?: Record<string, unknown>
 }
 
 /**
  * Agenda, Basecamp e o resto do Claude Code respondendo de memória. Devolve o
  * que foi pedido: os dias lidos da agenda e os escopos do Basecamp.
  */
-function mundo(on: On, { agenda: agendaFunciona = true, basecamp = 'ok' }: Mundo = {}) {
-  const pedidos = { dias: [] as string[], escopos: [] as string[], criadores: [] as string[] }
-  mock.clock(on, { now: AGORA })
-  mock.store(on)
+function mundo(on: On, { agenda: agendaFunciona = true, basecamp = 'ok', falhasDaLinhaDoTempo = 0, guardado }: Mundo = {}) {
+  const relogio = mock.clock(on, { now: AGORA })
+  const pedidos = { dias: [] as string[], escopos: [] as string[], criadores: [] as string[], linhasDoTempo: 0, relogio }
+  mock.store(on, guardado)
   mock.env(on, { HOME: '/Users/teste' })
   on('tool.list', () => ({
     value: [
@@ -138,6 +142,9 @@ function mundo(on: On, { agenda: agendaFunciona = true, basecamp = 'ok' }: Mundo
       const criador = CRIADORES[sub ?? '']
       return { value: { exitCode: criador === undefined ? 1 : 0, stdout: JSON.stringify(criador ?? null), stderr: '' } }
     }
+    // Com --agent, o erro vem na saída normal.
+    if (grupo === 'timeline' && ++pedidos.linhasDoTempo <= falhasDaLinhaDoTempo)
+      return { value: { exitCode: 1, stdout: '{"code":"unavailable","error":"Service Unavailable"}', stderr: '' } }
     // A linha do tempo vem com --agent: só os dados, sem o envelope.
     const stdout =
       grupo === 'timeline'
@@ -265,6 +272,44 @@ test('com a CLI do Basecamp sem login, o aviso pede o login', async ($, on) => {
   mundo(on, { basecamp: 'sem-login' })
   const { text } = await $.command.run({ command: 'semana', args: '' })
   expect(text).toContain('Não consegui ler o Basecamp. Rode basecamp auth login e tente de novo.')
+})
+
+test('a linha do tempo que falha de passagem é lida de novo, sem aviso', async ($, on) => {
+  const pedidos = mundo(on, { falhasDaLinhaDoTempo: 2 })
+  const resposta = $.command.run({ command: 'semana', args: '' })
+  await pedidos.relogio.advance(2_000)
+  await pedidos.relogio.advance(5_000)
+
+  expect((await resposta).text).toBe(RESUMO)
+  expect(pedidos.linhasDoTempo).toBe(3)
+})
+
+test('sem a linha do tempo de agora, valem as conclusões guardadas', async ($, on) => {
+  // As mesmas conclusões da linha do tempo, guardadas por uma leitura anterior.
+  const dias = Object.fromEntries(CONCLUIDAS.map(t => [String(t.id), t.due_on]))
+  const guardado = { conclusoes: { dias, cobertura: '0000-01-01', lidoAte: '2026-10-13T12:00:00' } }
+  const pedidos = mundo(on, { falhasDaLinhaDoTempo: 99, guardado })
+  const resposta = $.command.run({ command: 'semana', args: '' })
+  await pedidos.relogio.advance(2_000)
+  await pedidos.relogio.advance(5_000)
+
+  const { text } = await resposta
+  expect(text).toContain(RESUMO)
+  expect(text).toContain(
+    'Não consegui atualizar a linha do tempo do Basecamp (Service Unavailable); as concluídas mais recentes entram na próxima atualização.',
+  )
+  expect(pedidos.linhasDoTempo).toBe(3)
+})
+
+test('sem linha do tempo nem nada guardado, o aviso diz o motivo', async ($, on) => {
+  const pedidos = mundo(on, { falhasDaLinhaDoTempo: 99 })
+  const resposta = $.command.run({ command: 'semana', args: '' })
+  await pedidos.relogio.advance(2_000)
+  await pedidos.relogio.advance(5_000)
+
+  expect((await resposta).text).toContain(
+    'Não consegui ler a linha do tempo do Basecamp (Service Unavailable); as concluídas contam pela data de vencimento.',
+  )
 })
 
 test('a semana vai de domingo a sábado, qualquer que seja o dia', () => {
