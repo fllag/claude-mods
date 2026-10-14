@@ -1218,8 +1218,10 @@ type OpcoesDoPainel = { largura?: number; titulo?: string }
 
 /**
  * O SVG do painel e suas medidas, para a largura pedida em pixels. A ordem
- * segue o uso: primeiro o que fazer hoje, depois o planejamento da semana. Em
- * outra semana não há o card de hoje, e todos os dias ganham seu bloco.
+ * segue o uso: primeiro o que fazer, hoje e nos próximos dias, e por último a
+ * análise da semana (tarefas por dia, quem pediu e espaços), para os gráficos
+ * não separarem hoje de amanhã. Em outra semana não há o card de hoje, e todos
+ * os dias ganham seu bloco.
  */
 export function desenharSemana(semana: Semana, opcoes: OpcoesDoPainel = {}): { svg: string; altura: number; largura: number } {
   const largura = Math.round(Math.min(560, Math.max(300, opcoes.largura ?? 400)))
@@ -1230,14 +1232,14 @@ export function desenharSemana(semana: Semana, opcoes: OpcoesDoPainel = {}): { s
   cabecalho(d, semana, opcoes.titulo ?? 'Minha semana')
   numeros(d, semana)
   if (hoje !== undefined) cardDeHoje(d, semana, hoje, faixa)
-  d.y += 10
-  grafico(d, semana)
-  origens(d, semana)
-  d.y += 4
   for (const dia of hoje === undefined ? semana.dias : semana.dias.filter(x => x.data > semana.hoje)) {
     divisoria(d)
     blocoDoDia(d, semana, dia)
   }
+  divisoria(d)
+  d.y += 22
+  grafico(d, semana)
+  origens(d, semana)
   rodape(d, semana)
 
   const altura = Math.ceil(d.y)

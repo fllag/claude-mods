@@ -826,3 +826,20 @@ test('os criadores guardados não passam do limite: saem as tarefas mais antigas
   expect(juntos['9999']).toEqual({ id: 2, nome: 'B' })
   expect(juntos['0']).toBeUndefined()
 })
+
+test('a análise da semana vem depois dos dias, para não separar hoje de amanhã', () => {
+  const tarefa = (id: number, vence: string) => ({ id, titulo: `t${id}`, projeto: 'Financeiro', vence })
+  const semana = montarSemana({
+    agoraMs: new Date(2026, 9, 15, 9, 0).getTime(), // quinta
+    eventos: new Map(),
+    tarefas: [tarefa(1, '2026-10-15'), tarefa(2, '2026-10-16')],
+    avisos: [],
+    contaBasecamp: null,
+  })
+  const { svg } = desenharSemana(semana, { largura: 400 })
+  const posicao = (texto: string) => svg.indexOf(`>${texto}</text>`)
+  expect(posicao('Hoje')).toBeLessThan(posicao('Amanhã'))
+  expect(posicao('Amanhã')).toBeLessThan(posicao('Sábado'))
+  expect(posicao('Sábado')).toBeLessThan(posicao('Tarefas por dia'))
+  expect(posicao('Tarefas por dia')).toBeLessThan(posicao('Espaços'))
+})
