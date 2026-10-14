@@ -169,10 +169,11 @@ test('o painel é um SVG no desktop', async ($, on) => {
   // nada além do ritmo, e o topo não precisa dizer que cabe.
   expect(String(svg?.props.source)).not.toContain('além do ritmo')
   expect(String(svg?.props.source)).not.toMatch(/>[^<]*cabe no seu ritmo<\/text>/)
-  expect(String(svg?.props.source)).toContain('Fechar proposta')
-  // A atrasada da semana passada fica dentro de Hoje, com a data em que venceu.
-  expect(String(svg?.props.source)).toContain('>Revisão semanal</text>')
-  expect(String(svg?.props.source)).toContain('>venceu 9 out</text>')
+  // Hoje não lista as tarefas, nem as do dia nem as atrasadas: só conta, no
+  // título. Sem espaço, sai a concluída, não as atrasadas.
+  expect(String(svg?.props.source)).not.toContain('Fechar proposta')
+  expect(String(svg?.props.source)).not.toContain('Revisão semanal')
+  expect(String(svg?.props.source)).toContain('>1 reunião · 2 tarefas · 2 atrasadas</text>')
   expect(String(svg?.props.source)).toContain('>Ana</text>')
   expect(String(svg?.props.source)).toContain('1:1 - Ana')
   expect(String(svg?.props.source)).not.toContain('Recusada')
@@ -191,7 +192,7 @@ test('no terminal o painel vira texto', async ($, on) => {
   // Só o primeiro nome do Basecamp, com o período ao lado.
   expect(await ui.find({ type: 'Text', text: /^Ana · 11 a 17 de outubro/ })).toBeDefined()
   expect(await ui.find({ type: 'Text', text: /14:00 {2}1:1 - Ana/ })).toBeDefined()
-  expect(await ui.find({ type: 'Text', text: /○ Fechar proposta/ })).toBeDefined()
+  expect(await ui.find({ type: 'Text', text: /Fechar proposta/ })).toBeUndefined()
   expect(await ui.find({ key: 'atualizar' })).toBeDefined()
   await ui.unmount()
 })
@@ -388,12 +389,9 @@ test('a barra do topo soma a semana e conta as prioritárias', () => {
   // liso (a fazer) sem rótulo.
   expect(svg).not.toMatch(/>[^<]*cabem no seu ritmo<\/text>/)
   expect(svg).not.toContain('>a fazer</text>')
-  // Nas listas o emoji sai do título e vira a cor da bolinha.
-  expect(svg).toContain('>atrasada desta semana</text>')
-  expect(svg).toContain('>t0</text>')
-  // Hoje mostra no máximo 3 tarefas, atrasadas incluídas: a 🔴 atrasada e
-  // duas 🟢 de quinta. Das 10 de quinta sobram 8; das 2 atrasadas, 1.
-  expect(svg).toContain('>+ 8 tarefas e 1 atrasada</text>')
+  // Hoje conta as de quinta e as atrasadas: a 🔴 atrasada e as três 🟢.
+  expect(svg).toContain('<title>1 urgente (🔴) e 3 importantes (🟢) entre as tarefas de hoje e as atrasadas</title>')
+  expect(svg).not.toContain('>atrasada desta semana</text>')
 
   // Sem ritmo não há o que passe dele: sem traço, sem listras, sem veredito.
   const semRitmo = desenharSemana({ ...semana, ritmo: null }, { largura: 400 }).svg
@@ -405,7 +403,7 @@ test('a barra do topo soma a semana e conta as prioritárias', () => {
   expect(desenharSemana(semana, { largura: 300 }).svg).toContain('>tarefas</text>')
 })
 
-test('hoje traz as atrasadas, e os próximos dias listam as reuniões', () => {
+test('hoje conta as atrasadas, e os próximos dias listam as reuniões', () => {
   const tarefa = (id: number, vence: string, titulo = `t${id}`) => ({ id, titulo, projeto: '', vence })
   const semana = montarSemana({
     agoraMs: new Date(2026, 9, 12, 9, 0).getTime(), // segunda
@@ -419,11 +417,11 @@ test('hoje traz as atrasadas, e os próximos dias listam as reuniões', () => {
   })
   const { svg } = desenharSemana(semana, { largura: 400 })
 
-  // Sem seção própria de atrasadas e sem a linha dos dias que já passaram.
+  // Sem seção própria de atrasadas e sem a linha dos dias que já passaram: a
+  // atrasada entra na conta do título de Hoje, sem ser listada.
   expect(svg).not.toContain('>Atrasadas</text>')
   expect(svg).not.toContain('já passaram')
-  expect(svg).toContain('>Atrasada de domingo</text>')
-  expect(svg).toContain('>venceu dom</text>')
+  expect(svg).not.toContain('Atrasada de domingo')
   expect(svg).toContain('>1 atrasada</text>')
 
   // Cada dia que vem mostra as reuniões com horário, e o de dia inteiro.
@@ -496,46 +494,52 @@ test('as concluídas contam no dia em que foram concluídas, pela linha do tempo
   }
 })
 
-test('com atrasadas, hoje lista só as 3 mais prioritárias entre elas e as do dia', () => {
+test('hoje e amanhã não listam as tarefas: contam as urgentes e as importantes', () => {
   const tarefa = (id: number, vence: string, titulo: string) => ({ id, titulo, projeto: '', vence })
   const semana = montarSemana({
     agoraMs: AGORA, // terça, 13
-    eventos: new Map(),
+    eventos: new Map([
+      ['2026-10-14', [{ titulo: 'Reunião de time', inicio: 600, fim: 660, diaInteiro: false, comPessoas: true }]],
+    ]),
     tarefas: [
       tarefa(1, '2026-10-02', 'Atrasada antiga'),
       tarefa(2, '2026-10-09', '🟢 Atrasada importante'),
-      tarefa(3, '2026-10-12', 'Atrasada de ontem'),
-      ...[4, 5, 6].map(id => tarefa(id, '2026-10-12', `Outra atrasada ${id}`)),
+      ...[3, 4, 5, 6].map(id => tarefa(id, '2026-10-12', `Outra atrasada ${id}`)),
       tarefa(7, '2026-10-13', 'Comum de hoje'),
       tarefa(8, '2026-10-13', '🔴 Urgente de hoje'),
       ...[9, 10, 11].map(id => tarefa(id, '2026-10-13', `Mais uma de hoje ${id}`)),
+      tarefa(12, '2026-10-14', '🔴 Urgente de amanhã'),
+      tarefa(13, '2026-10-14', '🔴 Outra urgente de amanhã'),
+      tarefa(14, '2026-10-14', 'Comum de amanhã'),
+      tarefa(15, '2026-10-16', '🟢 Importante de sexta'),
     ],
     avisos: [],
     contaBasecamp: null,
   })
 
-  // Primeiro a importância; no mesmo grau, a que venceu há mais tempo.
   const { svg } = desenharSemana(semana, { largura: 400 })
-  expect(svg).toContain('>Urgente de hoje</text>')
-  expect(svg).toContain('>Atrasada importante</text>')
-  expect(svg).toContain('>Atrasada antiga</text>')
-  expect(svg).toContain('>venceu 2 out</text>')
-  expect(svg).not.toContain('>Atrasada de ontem</text>')
-  expect(svg).not.toContain('>Comum de hoje</text>')
-  expect(svg).toContain('>+ 4 tarefas e 4 atrasadas</text>')
+  // Nenhum título de tarefa, nem a conta do que ficou de fora de uma lista.
+  expect(svg).not.toMatch(/>[^<]*(Atrasada|de hoje|de amanhã|de sexta)[^<]*<\/text>/)
+  expect(svg).not.toMatch(/>\+ \d+ (tarefas?|atrasadas?)<\/text>/)
   // O título do card continua contando tudo.
   expect(svg).toContain('>5 tarefas · 6 atrasadas</text>')
+  // Hoje conta as do dia e as atrasadas; amanhã, só as dele. O topo, a semana.
+  expect(svg).toContain('<title>1 urgente (🔴) e 1 importante (🟢) entre as tarefas de hoje e as atrasadas</title>')
+  expect(svg).toContain('<title>2 urgentes (🔴) entre as tarefas de amanhã</title>')
+  expect(svg).toContain('>1 reunião · 3 tarefas</text>')
+  // Os outros dias continuam só com as reuniões e o resumo.
+  expect(svg).not.toContain('entre as tarefas de sexta')
 
-  // No terminal, as mesmas 3, na mesma ordem.
-  expect(hojeEmLinhas(semana)).toEqual([
-    '○ 🔴 Urgente de hoje',
-    '○ 🟢 Atrasada importante · venceu 9 out',
-    '○ Atrasada antiga · venceu 2 out',
-    '  + 4 tarefas e 4 atrasadas',
-  ])
+  // Dia sem urgente nem importante: nada no lugar.
+  const semPrioridade = desenharSemana({ ...semana, atrasadas: [], dias: semana.dias.map(d => ({ ...d, tarefas: [] })) }, { largura: 400 }).svg
+  expect(semPrioridade).not.toContain('entre as tarefas de')
+  expect(semPrioridade).not.toContain('>urgente')
+
+  // No terminal, a mesma conta numa linha.
+  expect(hojeEmLinhas(semana)).toEqual(['🔴 1 urgente · 🟢 1 importante'])
 })
 
-test('o Up next abre o dia, conta pela data e não se repete nas listas', () => {
+test('o Up next abre o dia e conta pela data', () => {
   const semana = montarSemana({
     agoraMs: new Date(2026, 9, 12, 9, 0).getTime(), // segunda
     eventos: new Map(),
@@ -556,10 +560,12 @@ test('o Up next abre o dia, conta pela data e não se repete nas listas', () => 
   expect(svg).toContain('>Up next</text>')
   expect(svg).toContain('>Pensar no planejamento</text>')
   expect(svg).toContain('>venceu 5 out</text>')
-  // Amanhã conta as duas, mas lista só a que não está no Up next.
+  // Amanhã conta as duas e não lista nenhuma; a do Up next, 🔴, entra na conta
+  // de urgentes. No Up next o emoji sai do título e vira a cor da bolinha.
   expect(svg).toContain('>2 tarefas</text>')
   expect(svg.match(/>Fechar contrato<\/text>/g)?.length).toBe(1)
-  expect(svg).toContain('>Tarefa de amanhã</text>')
+  expect(svg).not.toContain('Tarefa de amanhã')
+  expect(svg).toContain('<title>1 urgente (🔴) entre as tarefas de amanhã</title>')
 })
 
 test('o título é só o primeiro nome do Basecamp', () => {

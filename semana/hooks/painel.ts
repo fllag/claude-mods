@@ -1,7 +1,7 @@
 // Desenha a Semana como um SVG na identidade da Hospedin. Função pura: não
 // conhece o Claude Code, então roda igual no mod, nos testes e na prévia.
 import type { Dia, Prioridade, Semana, Tarefa } from '../types'
-import { importancia, porPrioridade, semMarcaDePrioridade } from './dados'
+import { importancia, semMarcaDePrioridade } from './dados'
 
 const COR = {
   roxo: '#765AA6',
@@ -231,12 +231,11 @@ function faixaDeHoras(dias: Dia[]): [number, number] {
 }
 
 /**
- * Quantas tarefas listar por dia: hoje e amanhã pedem ação, o resto só conta.
- * No de hoje, as atrasadas entram na mesma conta.
+ * Quantas tarefas listar. Na semana de hoje só o Up next vira lista: hoje e
+ * amanhã contam as urgentes e as importantes, e a lista fica no Basecamp. Em
+ * outra semana cada dia lista as primeiras (num dia que passou, as que ficaram).
  */
-const LIMITE_HOJE = 3
-const LIMITE_AMANHA = 3
-const LIMITE_ATRASADAS = 3
+const LIMITE_POR_DIA = 3
 const LIMITE_UP_NEXT = 3
 
 type Desenho = { partes: string[]; y: number; largura: number; margem: number }
@@ -335,7 +334,6 @@ export type Carga = {
 export function cargaDaSemana(semana: Semana): Carga {
   const feitas = semana.dias.reduce((n, x) => n + (x.concluidas ?? 0), 0)
   const aVencer = semana.dias.filter(x => x.data >= semana.hoje).flatMap(x => x.tarefas)
-  const graus = [...semana.atrasadas, ...aVencer].map(t => importancia(t.titulo))
   const ritmo = alemDoRitmo(semana)
   return {
     total: feitas + semana.atrasadas.length + aVencer.length,
@@ -345,9 +343,47 @@ export function cargaDaSemana(semana: Semana): Carga {
     alem: Math.min(ritmo?.excesso ?? 0, aVencer.length),
     cabem: ritmo?.cabem ?? null,
     diasUteis: ritmo?.diasUteis ?? 0,
-    urgentes: graus.filter(g => g === 0).length,
-    importantes: graus.filter(g => g === 1).length,
+    ...contarPrioritarias([...semana.atrasadas, ...aVencer]),
   }
+}
+
+export type Prioritarias = { urgentes: number; importantes: number }
+
+/** Entre as tarefas, quantas têm 🔴 (urgentes) e quantas têm 🟢 (importantes) no começo do título. */
+export function contarPrioritarias(tarefas: Tarefa[]): Prioritarias {
+  const graus = tarefas.map(t => importancia(t.titulo))
+  return { urgentes: graus.filter(g => g === 0).length, importantes: graus.filter(g => g === 1).length }
+}
+
+/** "1 urgente (🔴) e 2 importantes (🟢)": a conta da dica, com o ícone que a gera. */
+function prioritariasEmTexto(p: Prioritarias): string {
+  return juntar([
+    ...(p.urgentes > 0 ? [`${plural(p.urgentes, 'urgente', 'urgentes')} (🔴)`] : []),
+    ...(p.importantes > 0 ? [`${plural(p.importantes, 'importante', 'importantes')} (🟢)`] : []),
+  ])
+}
+
+/**
+ * "● 2 urgentes  ● 3 importantes": a bolinha da prioridade, o número em
+ * negrito e o rótulo, com uma dica no conjunto. O que é zero não aparece.
+ * `recuo` é onde o número começa, contando da bolinha.
+ */
+function prioritarias(d: Desenho, x: number, y: number, p: Prioritarias, dica: string, recuo = 14) {
+  const marcas: [number, number, string][] = [
+    [0, p.urgentes, p.urgentes === 1 ? 'urgente' : 'urgentes'],
+    [1, p.importantes, p.importantes === 1 ? 'importante' : 'importantes'],
+  ]
+  const partes: string[] = []
+  for (const [grau, n, rotulo] of marcas.filter(([, n]) => n > 0)) {
+    const larguraDoNumero = larguraDoTexto(String(n), 12, true)
+    partes.push(
+      bolinha(x + 4.5, y - 4.5, grau),
+      texto(x + recuo, y, String(n), { tamanho: 12, peso: 700, classe: 'txt' }),
+      texto(x + recuo + larguraDoNumero + 3, y, rotulo, { tamanho: 12, classe: 'sec' }),
+    )
+    x += recuo + larguraDoNumero + 3 + larguraDoTexto(rotulo, 12) + 14
+  }
+  if (partes.length > 0) add(d, `<g><title>${esc(dica)}</title>`, ...partes, '</g>')
 }
 
 type Trecho = { n: number; classe: 'feita' | 'atrasada' | 'coluna' | 'excesso'; rotulo: string; dica: string }
@@ -483,31 +519,11 @@ function numeros(d: Desenho, semana: Semana) {
   // As prioritárias: quando não cabe tudo, é das outras que se tira. Com a
   // legenda vazia (semana futura que cabe no ritmo), sobem para o lugar dela.
   const semLegenda = c.total > 0 && naLegenda.length === 0
-  const prioritarias = c.urgentes + c.importantes
-  if (semLegenda && prioritarias === 0) y -= 20
-  if (prioritarias > 0) {
+  const comPrioritarias = c.urgentes + c.importantes > 0
+  if (semLegenda && !comPrioritarias) y -= 20
+  if (comPrioritarias) {
     if (!semLegenda) y += 26
-    const marcas: [number, number, string][] = [
-      [0, c.urgentes, c.urgentes === 1 ? 'urgente' : 'urgentes'],
-      [1, c.importantes, c.importantes === 1 ? 'importante' : 'importantes'],
-    ]
-    const partes: string[] = []
-    let xp = xEsq
-    for (const [grau, n, rotulo] of marcas.filter(([, n]) => n > 0)) {
-      const larguraDoNumero = larguraDoTexto(String(n), 12, true)
-      partes.push(
-        bolinha(xp + 4.5, y - 4.5, grau),
-        texto(xp + 14, y, String(n), { tamanho: 12, peso: 700, classe: 'txt' }),
-        texto(xp + 14 + larguraDoNumero + 3, y, rotulo, { tamanho: 12, classe: 'sec' }),
-      )
-      xp += 14 + larguraDoNumero + 3 + larguraDoTexto(rotulo, 12) + 14
-    }
-    add(
-      d,
-      `<g><title>Tarefas a fazer com 🔴 ou 🟢 no começo do título, atrasadas incluídas</title>`,
-      ...partes,
-      '</g>',
-    )
+    prioritarias(d, xEsq, y, c, 'Tarefas a fazer com 🔴 ou 🟢 no começo do título, atrasadas incluídas')
   }
   d.y = y + 24
 }
@@ -708,28 +724,10 @@ function quando(semana: Semana, data: string): string {
   return data >= domingo && data <= sabado ? (ABREVIADOS[dataPartes(data).semana] ?? curta(data)) : curta(data)
 }
 
-/**
- * As tarefas que a lista de um dia mostra: as atrasadas e as do dia disputam
- * as mesmas vagas, e entram as mais prioritárias. Diz também quantas de cada
- * ficaram de fora.
- */
-function escolherTarefas(atrasadas: Tarefa[], tarefas: Tarefa[], limite: number) {
-  const escolhidas = porPrioridade([...atrasadas, ...tarefas]).slice(0, limite)
-  const naLista = new Set(escolhidas.map(t => t.id))
-  return {
-    escolhidas,
-    tarefasDeFora: tarefas.filter(t => !naLista.has(t.id)).length,
-    atrasadasDeFora: atrasadas.filter(t => !naLista.has(t.id)).length,
-  }
-}
-
-/** "+ 10 tarefas e 3 atrasadas": o que ficou de fora da lista; vazio se nada ficou. */
-function oQueSobra(tarefas: number, atrasadas: number, passou = false): string {
-  const partes = [
-    tarefas > 0 ? (passou ? plural(tarefas, 'atrasada', 'atrasadas') : plural(tarefas, 'tarefa', 'tarefas')) : '',
-    atrasadas > 0 ? plural(atrasadas, 'atrasada', 'atrasadas') : '',
-  ].filter(Boolean)
-  return partes.length > 0 ? `+ ${partes.join(' e ')}` : ''
+/** "+ 10 tarefas", ou "+ 3 atrasadas" num dia que passou: o que ficou de fora da lista; vazio se nada ficou. */
+function oQueSobra(n: number, passou: boolean): string {
+  if (n === 0) return ''
+  return `+ ${passou ? plural(n, 'atrasada', 'atrasadas') : plural(n, 'tarefa', 'tarefas')}`
 }
 
 function trilha(d: Desenho, dia: Dia, y: number, xEsq: number, xDir: number, faixa: [number, number], agora: number | null, emCard: boolean) {
@@ -766,9 +764,10 @@ function escala(d: Desenho, y: number, faixa: [number, number], px: (m: number) 
 }
 
 /**
- * As partes de "2 reuniões · 25 tarefas · 3 concluídas · 2 atrasadas": o total
+ * As partes de "2 reuniões · 25 tarefas · 2 atrasadas · 3 concluídas": o total
  * do dia, com as concluídas incluídas. Quantas foram concluídas, só no de hoje:
- * nos outros dias a linha fica curta, e o gráfico já mostra.
+ * nos outros dias a linha fica curta, e o gráfico já mostra. Sem espaço, sai
+ * primeiro a última, então as atrasadas, que o card não lista, vêm antes.
  */
 function resumoDoDia(dia: Dia, atrasadas = 0, comConcluidas = false): string[] {
   const reunioes = dia.eventos.filter(e => e.comPessoas || e.diaInteiro).length
@@ -777,8 +776,8 @@ function resumoDoDia(dia: Dia, atrasadas = 0, comConcluidas = false): string[] {
   const partes = [
     reunioes > 0 ? plural(reunioes, 'reunião', 'reuniões') : '',
     total > 0 ? plural(total, 'tarefa', 'tarefas') : '',
-    comConcluidas && feitas > 0 ? plural(feitas, 'concluída', 'concluídas') : '',
     atrasadas > 0 ? plural(atrasadas, 'atrasada', 'atrasadas') : '',
+    comConcluidas && feitas > 0 ? plural(feitas, 'concluída', 'concluídas') : '',
   ].filter(Boolean)
   return partes.length > 0 ? partes : ['livre']
 }
@@ -855,27 +854,27 @@ function agoraEProxima(d: Desenho, semana: Semana, dia: Dia, xEsq: number, xDir:
 type OpcoesDaLista = {
   /** Quantas tarefas do dia listar; 0 lista só as reuniões. */
   limite: number
-  /** Só no de hoje: as atrasadas e o Up next. */
-  atrasadas?: Tarefa[]
+  /** Só no de hoje: o Up next. */
   upNext?: Prioridade[]
+  /** Em hoje e amanhã, no lugar da lista: quantas são urgentes e importantes, e a dica que explica a conta. */
+  prioritarias?: { conta: Prioritarias; dica: string }
 }
 
 /**
  * As linhas de um dia. No de hoje, primeiro o Up next, com qualquer data e uma
- * linha fina separando do resto; depois as reuniões e as tarefas mais
- * prioritárias entre as atrasadas, com o dia em que venceram, e as do dia. Uma
- * tarefa do Up next não se repete nas outras listas. Devolve onde a última
+ * linha fina separando do resto; depois as reuniões e, por fim, as primeiras
+ * tarefas do dia ou quantas são urgentes e importantes. Devolve onde a última
  * linha terminou.
  */
 function listaDoDia(d: Desenho, semana: Semana, dia: Dia, xEsq: number, xDir: number, y: number, o: OpcoesDaLista): number {
   const ehHoje = dia.data === semana.hoje
   // Só aparece numa semana passada: o que vencia nele e ficou é atrasada.
   const passou = dia.data < semana.hoje
-  const idsDoUpNext = new Set((semana.upNext ?? []).map(t => t.id))
   const reunioes = dia.eventos.filter(ev => ev.comPessoas || ev.diaInteiro)
-  const atrasadas = (o.atrasadas ?? []).filter(t => !idsDoUpNext.has(t.id))
-  const tarefas = dia.tarefas.filter(t => !idsDoUpNext.has(t.id))
-  const { escolhidas, tarefasDeFora, atrasadasDeFora } = escolherTarefas(atrasadas, tarefas, o.limite)
+  // As tarefas do dia já vêm por importância.
+  const escolhidas = dia.tarefas.slice(0, o.limite)
+  const conta = o.prioritarias?.conta
+  const comPrioritarias = conta !== undefined && conta.urgentes + conta.importantes > 0
 
   const upNext = o.upNext ?? []
   if (upNext.length > 0) {
@@ -895,7 +894,7 @@ function listaDoDia(d: Desenho, semana: Semana, dia: Dia, xEsq: number, xDir: nu
       y += 19
       add(d, texto(xEsq + 16, y, `+ ${upNext.length - LIMITE_UP_NEXT} no Up next`, { tamanho: 12, classe: 'sec' }))
     }
-    if (reunioes.length + escolhidas.length > 0) {
+    if (reunioes.length + escolhidas.length > 0 || comPrioritarias) {
       y += 12
       add(d, `<line x1="${xEsq}" x2="${xDir}" y1="${y}" y2="${y}" class="linha" stroke-width="1"/>`)
     }
@@ -914,14 +913,16 @@ function listaDoDia(d: Desenho, semana: Semana, dia: Dia, xEsq: number, xDir: nu
   }
   for (const t of escolhidas) {
     y += 20
-    const venceuAntes = t.vence < dia.data
-    linha(d, {
-      y, xEsq, xDir, tipo: passou || venceuAntes ? 'atrasada' : 'tarefa', titulo: t.titulo, dica: dicaDaTarefa(t),
-      ...(venceuAntes ? { direita: `venceu ${quando(semana, t.vence)}` } : {}),
-    })
+    linha(d, { y, xEsq, xDir, tipo: passou ? 'atrasada' : 'tarefa', titulo: t.titulo, dica: dicaDaTarefa(t) })
+  }
+  // A bolinha fica na coluna dos marcadores e o número, na dos horários. Um
+  // respiro a mais depois das reuniões: é uma conta, não mais uma reunião.
+  if (o.prioritarias !== undefined && comPrioritarias) {
+    y += reunioes.length > 0 ? 24 : 20
+    prioritarias(d, xEsq, y, o.prioritarias.conta, o.prioritarias.dica, 16)
   }
   // Num dia que só lista as reuniões, as tarefas já estão no resumo do título.
-  const sobra = oQueSobra(o.limite > 0 ? tarefasDeFora : 0, atrasadasDeFora, passou)
+  const sobra = oQueSobra(o.limite > 0 ? dia.tarefas.length - escolhidas.length : 0, passou)
   if (sobra !== '') {
     y += 19
     add(d, texto(xEsq + 16, y, sobra, { tamanho: 12, classe: 'sec' }))
@@ -948,7 +949,10 @@ function tituloDoDia(d: Desenho, y: number, xEsq: number, xDir: number, rotulo: 
   )
 }
 
-/** O card de hoje, no topo: agora e próxima, a barra do dia e o que fazer, do Up next às tarefas do dia. */
+/**
+ * O card de hoje, no topo: agora e próxima, a barra do dia, o Up next, as
+ * reuniões e quantas tarefas de hoje e atrasadas são urgentes e importantes.
+ */
 function cardDeHoje(d: Desenho, semana: Semana, dia: Dia, faixa: [number, number]) {
   const topo = d.y
   const recuo = 14
@@ -968,7 +972,12 @@ function cardDeHoje(d: Desenho, semana: Semana, dia: Dia, faixa: [number, number
   y += 8 + 12
   escala(d, y, faixa, px)
 
-  y = listaDoDia(d, semana, dia, xEsq, xDir, y + 4, { limite: LIMITE_HOJE, atrasadas: semana.atrasadas, upNext: semana.upNext ?? [] })
+  const conta = contarPrioritarias([...semana.atrasadas, ...dia.tarefas])
+  y = listaDoDia(d, semana, dia, xEsq, xDir, y + 4, {
+    limite: 0,
+    upNext: semana.upNext ?? [],
+    prioritarias: { conta, dica: `${prioritariasEmTexto(conta)} entre as tarefas de hoje e as atrasadas` },
+  })
 
   const altura = y - topo + 18
   d.partes.splice(
@@ -982,8 +991,8 @@ function cardDeHoje(d: Desenho, semana: Semana, dia: Dia, faixa: [number, number
 
 /**
  * Um dia fora do card de hoje: nome, resumo e as reuniões. Na semana de hoje,
- * só amanhã lista as primeiras tarefas; em outra semana, todo dia lista: as
- * primeiras a fazer ou, se o dia já passou, as atrasadas.
+ * amanhã diz também quantas tarefas são urgentes e importantes; em outra
+ * semana, todo dia lista as primeiras a fazer ou, se já passou, as atrasadas.
  */
 function blocoDoDia(d: Desenho, semana: Semana, dia: Dia) {
   const ehAmanha = dia.data === diaSeguinte(semana.hoje)
@@ -997,8 +1006,13 @@ function blocoDoDia(d: Desenho, semana: Semana, dia: Dia) {
   const xDir = d.largura - d.margem
   let y = d.y + 26
   tituloDoDia(d, y, xEsq, xDir, rotulo, detalhe, resumoDoDia(dia, passou ? dia.tarefas.length : 0), 14, 'txt')
-  const limite = passou ? LIMITE_ATRASADAS : ehAmanha || outraSemana ? LIMITE_AMANHA : 0
-  y = listaDoDia(d, semana, dia, xEsq, xDir, y + 4, { limite })
+  const conta = contarPrioritarias(dia.tarefas)
+  y = listaDoDia(d, semana, dia, xEsq, xDir, y + 4, {
+    limite: outraSemana ? LIMITE_POR_DIA : 0,
+    ...(ehAmanha && !outraSemana
+      ? { prioritarias: { conta, dica: `${prioritariasEmTexto(conta)} entre as tarefas de amanhã` } }
+      : {}),
+  })
   d.y = y + 22
 }
 
@@ -1060,17 +1074,15 @@ export function desenharSemana(semana: Semana, opcoes: OpcoesDoPainel = {}): { s
 export function hojeEmLinhas(semana: Semana): string[] {
   const hoje = semana.dias.find(x => x.data === semana.hoje)
   if (hoje === undefined) return []
-  const upNext = semana.upNext ?? []
-  const idsDoUpNext = new Set(upNext.map(t => t.id))
-  const atrasadas = semana.atrasadas.filter(t => !idsDoUpNext.has(t.id))
-  const tarefas = hoje.tarefas.filter(t => !idsDoUpNext.has(t.id))
-  const { escolhidas, tarefasDeFora, atrasadasDeFora } = escolherTarefas(atrasadas, tarefas, LIMITE_HOJE)
-  const sobra = oQueSobra(tarefasDeFora, atrasadasDeFora)
+  const p = contarPrioritarias([...semana.atrasadas, ...hoje.tarefas])
+  const conta = [
+    ...(p.urgentes > 0 ? [`🔴 ${plural(p.urgentes, 'urgente', 'urgentes')}`] : []),
+    ...(p.importantes > 0 ? [`🟢 ${plural(p.importantes, 'importante', 'importantes')}`] : []),
+  ]
   return [
-    ...upNext.slice(0, LIMITE_UP_NEXT).map(t => `Up next · ${t.titulo}`),
+    ...(semana.upNext ?? []).slice(0, LIMITE_UP_NEXT).map(t => `Up next · ${t.titulo}`),
     ...hoje.eventos.filter(e => e.comPessoas || e.diaInteiro).map(e => `● ${e.diaInteiro ? 'dia todo' : hora(e.inicio)}  ${e.titulo}`),
-    ...escolhidas.map(t => `○ ${t.titulo}${t.vence < hoje.data ? ` · venceu ${quando(semana, t.vence)}` : ''}`),
-    ...(sobra === '' ? [] : [`  ${sobra}`]),
+    ...(conta.length > 0 ? [conta.join(' · ')] : []),
   ]
 }
 

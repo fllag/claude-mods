@@ -213,13 +213,6 @@ export function semMarcaDePrioridade(titulo: string): string {
 export const porImportancia = (tarefas: Tarefa[]): Tarefa[] =>
   [...tarefas].sort((a, b) => importancia(a.titulo) - importancia(b.titulo))
 
-/**
- * O que fazer primeiro: por importância e, no mesmo grau, pelo vencimento. Uma
- * atrasada vem antes da de hoje, e a que venceu há mais tempo, antes das outras.
- */
-export const porPrioridade = (tarefas: Tarefa[]): Tarefa[] =>
-  [...tarefas].sort((a, b) => importancia(a.titulo) - importancia(b.titulo) || a.vence.localeCompare(b.vence))
-
 /** Tarefas do Basecamp sem repetição, de uma ou mais respostas `--json`. */
 export function normalizarTarefas(respostas: unknown[]): Tarefa[] {
   const vistas = new Map<number, Tarefa>()
