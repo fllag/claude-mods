@@ -1,8 +1,25 @@
 import { expect, mock, test } from 'claude-code/testing'
 import type { On } from 'claude-code'
 
-import { importancia, lerConclusoes, lerDeslocamento, montarSemana, primeiroNome, semMarcaDePrioridade } from '../hooks/dados'
-import { alemDoRitmo, cargaDaSemana, desenharSemana, duracao, hojeEmLinhas, tituloDaSemana } from '../hooks/painel'
+import {
+  importancia,
+  juntarCriadores,
+  lerConclusoes,
+  lerDeslocamento,
+  montarSemana,
+  primeiroNome,
+  semMarcaDePrioridade,
+} from '../hooks/dados'
+import {
+  alemDoRitmo,
+  cargaDaSemana,
+  desenharSemana,
+  duracao,
+  hojeEmLinhas,
+  origensDaSemana,
+  origensEmLinhas,
+  tituloDaSemana,
+} from '../hooks/painel'
 
 // Terça, 13 de outubro de 2026, 10:15 no horário local.
 const AGORA = new Date(2026, 9, 13, 10, 15).getTime()
@@ -66,6 +83,16 @@ const LINHA_DO_TEMPO = CONCLUIDAS.map(t => ({
 // No Up next, uma tarefa que venceu na segunda passada.
 const UP_NEXT = [{ id: 50, content: 'Revisar metas do trimestre', due_on: '2026-10-05', bucket: { name: 'Pessoal' } }]
 
+// Quem criou cada tarefa. Ana (pessoa 7) é quem está logada; a 11 não abre.
+const EU = { id: 7, name: 'Ana Teste' }
+const CRIADORES: Record<string, { id: number; nome: string }> = {
+  1: { id: 7, nome: 'Ana Teste' },
+  2: { id: 7, nome: 'Ana Teste' },
+  3: { id: 8, nome: 'Bruno' },
+  50: { id: 8, nome: 'Bruno' },
+  10: { id: 9, nome: 'Carla' },
+}
+
 const RESUMO =
   // Hoje conta tudo o que vence no dia: 1 a fazer e 1 concluída. As atrasadas
   // são a da semana passada e a do Up next. A semana soma 2 concluídas, 2
@@ -83,7 +110,7 @@ type Mundo = {
  * que foi pedido: os dias lidos da agenda e os escopos do Basecamp.
  */
 function mundo(on: On, { agenda: agendaFunciona = true, basecamp = 'ok' }: Mundo = {}) {
-  const pedidos = { dias: [] as string[], escopos: [] as string[] }
+  const pedidos = { dias: [] as string[], escopos: [] as string[], criadores: [] as string[] }
   mock.clock(on, { now: AGORA })
   mock.store(on)
   mock.env(on, { HOME: '/Users/teste' })
@@ -105,6 +132,12 @@ function mundo(on: On, { agenda: agendaFunciona = true, basecamp = 'ok' }: Mundo
     if (basecamp === 'sem-login') return { value: { exitCode: 1, stdout: '', stderr: 'not authenticated' } }
     const [, grupo, sub, escopo] = e.argv
     if (grupo === 'assignments' && sub === 'due') pedidos.escopos.push(escopo ?? '')
+    // O show vem com --jq: só quem criou, sem o envelope.
+    if (grupo === 'show') {
+      pedidos.criadores.push(sub ?? '')
+      const criador = CRIADORES[sub ?? '']
+      return { value: { exitCode: criador === undefined ? 1 : 0, stdout: JSON.stringify(criador ?? null), stderr: '' } }
+    }
     // A linha do tempo vem com --agent: só os dados, sem o envelope.
     const stdout =
       grupo === 'timeline'
@@ -114,6 +147,8 @@ function mundo(on: On, { agenda: agendaFunciona = true, basecamp = 'ok' }: Mundo
             data:
               grupo === 'me'
                 ? { identity: { first_name: 'Ana', last_name: 'Teste' }, accounts: [] }
+                : grupo === 'people'
+                  ? EU
                 : sub === 'completed'
                   ? CONCLUIDAS
                   : sub === 'list'
@@ -711,4 +746,83 @@ test('outra semana muda os dias, mas o ritmo continua o das últimas 4 semanas',
   expect(atual.upNext?.length).toBe(1)
   expect(proxima.upNext).toEqual([])
   expect(proxima.deslocamento).toBe(1)
+})
+
+test('quem pediu e os espaços dividem o total da semana, com "Você" nas minhas', async ($, on) => {
+  const pedidos = mundo(on)
+  await $.command.run({ command: 'semana', args: '' })
+
+  // Só as 6 tarefas do total da semana são abertas: as 2 concluídas nela, as 2
+  // atrasadas e as 2 a fazer. As concluídas de outras semanas, não.
+  expect([...pedidos.criadores].sort()).toEqual(['1', '10', '11', '2', '3', '50'])
+
+  const ui = await $.ui.mount({ ...PAINEL, surface: 'desktop' })
+  const svg = String((await ui.find({ type: 'Svg' }))?.props.source)
+  expect(svg).toContain('>Quem pediu</text>')
+  expect(svg).toContain('>Espaços</text>')
+  expect(svg).toContain('>Você</text>')
+  // A 11 não abriu: fica fora de quem pediu, com a nota ao lado do título.
+  expect(svg).toContain('>1 sem autor</text>')
+  expect(svg).toContain('<title>Bruno: 2 tarefas · 1 atrasada · 1 a fazer</title>')
+  await ui.unmount()
+
+  // Quem criou fica guardado: a próxima leitura não abre nada de novo, só a 11.
+  pedidos.criadores.length = 0
+  await $.command.run({ command: 'semana', args: '' })
+  expect(pedidos.criadores).toEqual(['11'])
+})
+
+test('cada gráfico soma o mesmo total da barra do topo e junta o que passa de 5 linhas', () => {
+  const tarefa = (id: number, vence: string, projeto: string, criador?: number) => ({
+    id, titulo: `t${id}`, projeto, vence,
+    ...(criador === undefined ? {} : { criador: { id: criador, nome: `Pessoa ${criador}` } }),
+  })
+  const tarefas = [
+    tarefa(1, '2026-10-12', 'Financeiro', 1), // atrasada
+    ...Array.from({ length: 8 }, (_, i) => tarefa(10 + i, '2026-10-15', `Espaço ${i % 7}`, i)),
+    tarefa(30, '2026-10-16', '', undefined),
+  ]
+  const entrada = {
+    agoraMs: new Date(2026, 9, 15, 9, 0).getTime(), // quinta
+    eventos: new Map(),
+    tarefas: tarefas.map(({ criador, ...t }) => t),
+    concluidas: [tarefa(100, '2026-10-13', 'Financeiro')],
+    eu: 0,
+    avisos: [],
+    contaBasecamp: null,
+  }
+  const criadores = Object.fromEntries(
+    [...tarefas, tarefa(100, '', '', 1)].flatMap(t => (t.criador ? [[String(t.id), t.criador]] : [])),
+  )
+  const semana = montarSemana({ ...entrada, criadores })
+  const total = cargaDaSemana(semana).total
+  const { pessoas, espacos, semCriador } = origensDaSemana(semana)
+  const soma = (gs: typeof pessoas) => gs.reduce((n, g) => n + g.feitas + g.atrasadas + g.aFazer, 0)
+  expect(total).toBe(11)
+  expect(soma(pessoas) + semCriador).toBe(total)
+  expect(soma(espacos)).toBe(total)
+  expect(semCriador).toBe(1)
+  // Pessoa 1 tem a atrasada, uma a fazer e a concluída: vem primeiro.
+  expect(pessoas[0]).toEqual({ nome: 'Pessoa 1', voce: false, feitas: 1, atrasadas: 1, aFazer: 1 })
+  expect(pessoas.find(g => g.voce)?.nome).toBe('Você')
+  expect(espacos.find(g => g.nome === 'Sem espaço')?.aFazer).toBe(1)
+
+  // 8 pessoas viram 4 linhas e "4 outras pessoas".
+  const { svg } = desenharSemana(semana, { largura: 400 })
+  expect(svg).toContain('>4 outras pessoas</text>')
+  expect(svg).toContain('>Financeiro</text>')
+  expect(origensEmLinhas(semana)[0]).toMatch(/^Quem pediu: Pessoa 1 3 · /)
+
+  // Sem nenhum criador conhecido, só o gráfico dos espaços.
+  const semCriadores = desenharSemana(montarSemana(entrada), { largura: 400 }).svg
+  expect(semCriadores).not.toContain('>Quem pediu</text>')
+  expect(semCriadores).toContain('>Espaços</text>')
+})
+
+test('os criadores guardados não passam do limite: saem as tarefas mais antigas', () => {
+  const muitos = Object.fromEntries(Array.from({ length: 3005 }, (_, i) => [String(i), { id: 1, nome: 'A' }]))
+  const juntos = juntarCriadores(muitos, { 9999: { id: 2, nome: 'B' } })
+  expect(Object.keys(juntos).length).toBe(3000)
+  expect(juntos['9999']).toEqual({ id: 2, nome: 'B' })
+  expect(juntos['0']).toBeUndefined()
 })

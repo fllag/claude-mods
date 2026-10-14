@@ -8,12 +8,17 @@ export type Evento = {
   comPessoas: boolean
 }
 
+/** Quem criou uma tarefa no Basecamp. */
+export type Criador = { id: number; nome: string }
+
 export type Tarefa = {
   id: number
   titulo: string
   projeto: string
   /** AAAA-MM-DD */
   vence: string
+  /** Quem criou, lido item a item; ausente enquanto não se sabe. */
+  criador?: Criador
 }
 
 /** Uma tarefa do Up next do Basecamp, que pode não ter data. */
@@ -40,6 +45,8 @@ export type Dia = {
    * linha do tempo do Basecamp, pela de vencimento).
    */
   concluidas: number
+  /** As concluídas no dia; ausente numa leitura salva por versão anterior. */
+  feitas?: Tarefa[]
 }
 
 export type Semana = {
@@ -74,6 +81,8 @@ export type Semana = {
   contaBasecamp: string | null
   /** Primeiro nome no Basecamp, para o título; ausente numa leitura salva por versão anterior. */
   nome?: string | null
+  /** Meu id de pessoa no Basecamp, para "Você" em quem pediu. */
+  eu?: number | null
 }
 
 declare module 'claude-code' {

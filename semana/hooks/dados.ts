@@ -1,7 +1,7 @@
 // Transforma o que a agenda (Google Calendar) e o Basecamp respondem na
 // Semana que o painel desenha. Só funções puras: a busca, que usa o `$`, fica
 // no register.tsx, porque o `$` não atravessa imports.
-import type { Conclusoes, Dia, Evento, Prioridade, Semana, Tarefa } from '../types'
+import type { Conclusoes, Criador, Dia, Evento, Prioridade, Semana, Tarefa } from '../types'
 
 export const DIAS_NA_JANELA = 7
 
@@ -307,6 +307,64 @@ export function lerConclusoes(salvas: Conclusoes | undefined, eventos: unknown[]
   }
 }
 
+/** Meu id de pessoa na conta, da resposta de `basecamp people show me --json`. */
+export function pessoaDoBasecamp(resposta: unknown): number | null {
+  const id = (resposta as { data?: { id?: unknown } } | null)?.data?.id
+  return typeof id === 'number' ? id : null
+}
+
+/** O filtro do `basecamp show <id> --jq` que traz só quem criou o item. */
+export const FILTRO_DO_CRIADOR = '.data.creator | {id, nome: .name}'
+
+/** Quem criou, da resposta de `basecamp show <id> --jq FILTRO_DO_CRIADOR`. */
+export function lerCriador(resposta: unknown): Criador | null {
+  const c = resposta as { id?: unknown; nome?: unknown } | null
+  return typeof c?.id === 'number' && typeof c.nome === 'string' && c.nome.trim() !== ''
+    ? { id: c.id, nome: c.nome.trim() }
+    : null
+}
+
+/** Quantos criadores guardar entre leituras: quem criou uma tarefa não muda, mas a lista não cresce sem fim. */
+export const CRIADORES_GUARDADOS = 3000
+
+/** Os criadores guardados, se o que veio do armazenamento tiver a forma certa. */
+export function comoCriadores(valor: unknown): Record<string, Criador> {
+  if (typeof valor !== 'object' || valor === null) return {}
+  return Object.fromEntries(
+    Object.entries(valor).flatMap(([id, c]) => {
+      const lido = lerCriador(c)
+      return lido === null ? [] : [[id, lido]]
+    }),
+  )
+}
+
+/**
+ * Junta os criadores novos aos guardados. Além do limite, saem os de id menor,
+ * que são as tarefas mais antigas: um objeto ordena chaves numéricas pelo valor.
+ */
+export function juntarCriadores(salvos: Record<string, Criador>, novos: Record<string, Criador>): Record<string, Criador> {
+  const todos = Object.entries({ ...salvos, ...novos })
+  return Object.fromEntries(todos.slice(Math.max(0, todos.length - CRIADORES_GUARDADOS)))
+}
+
+/** Em que pé está uma tarefa que entra no total da semana. */
+export type Estado = 'feita' | 'atrasada' | 'aFazer'
+
+/**
+ * As tarefas que formam o total da semana, as mesmas da barra do topo: as
+ * concluídas nela, as atrasadas e o que vence de hoje até sábado.
+ */
+export function tarefasDoTotal(semana: Semana): { tarefa: Tarefa; estado: Estado }[] {
+  return [
+    ...semana.dias.flatMap(x => x.feitas ?? []).map(tarefa => ({ tarefa, estado: 'feita' as const })),
+    ...semana.atrasadas.map(tarefa => ({ tarefa, estado: 'atrasada' as const })),
+    ...semana.dias
+      .filter(x => x.data >= semana.hoje)
+      .flatMap(x => x.tarefas)
+      .map(tarefa => ({ tarefa, estado: 'aFazer' as const })),
+  ]
+}
+
 /** O primeiro nome de quem está logado, da resposta de `basecamp me --json`. */
 export function primeiroNome(resposta: unknown): string | null {
   const nome = (resposta as { data?: { identity?: { first_name?: unknown } } } | null)?.data?.identity?.first_name
@@ -347,20 +405,32 @@ export function montarSemana(args: {
   contaBasecamp: string | null
   /** Primeiro nome no Basecamp; sem ele, o título fica genérico. */
   nome?: string | null
+  /** Quem criou cada tarefa, por id; a que não estiver aqui fica sem criador. */
+  criadores?: Record<string, Criador>
+  /** Meu id de pessoa no Basecamp. */
+  eu?: number | null
 }): Semana {
+  const comCriador = (t: Tarefa): Tarefa => {
+    const criador = args.criadores?.[String(t.id)]
+    return criador === undefined ? t : { ...t, criador }
+  }
   const upNext = args.upNext ?? []
   const jaListadas = new Set(args.tarefas.map(t => t.id))
   const tarefas = [
     ...args.tarefas,
     ...upNext.flatMap(t => (t.vence === null || jaListadas.has(t.id) ? [] : [{ ...t, vence: t.vence }])),
-  ]
+  ].map(comCriador)
   const pendentes = new Set(tarefas.map(t => t.id))
-  const concluidas = (args.concluidas ?? []).filter(t => !pendentes.has(t.id))
-  const diasDeConclusao =
+  const concluidas = (args.concluidas ?? []).filter(t => !pendentes.has(t.id)).map(comCriador)
+  const conclusoes: { tarefa: Tarefa; dia: string }[] =
     args.conclusoes === undefined
-      ? concluidas.map(t => t.vence)
-      : concluidas.flatMap(t => args.conclusoes?.dias[String(t.id)] ?? [])
-  const concluidasEm = (data: string) => diasDeConclusao.filter(dia => dia === data).length
+      ? concluidas.map(tarefa => ({ tarefa, dia: tarefa.vence }))
+      : concluidas.flatMap(tarefa => {
+          const dia = args.conclusoes?.dias[String(tarefa.id)]
+          return dia === undefined ? [] : [{ tarefa, dia }]
+        })
+  const feitasEm = (data: string) => conclusoes.filter(c => c.dia === data).map(c => c.tarefa)
+  const concluidasEm = (data: string) => feitasEm(data).length
   const hoje = dataLocal(args.agoraMs)
   const deslocamento = args.deslocamento ?? 0
   // O ritmo conta da semana de hoje, qualquer que seja a semana mostrada.
@@ -377,6 +447,7 @@ export function montarSemana(args: {
       eventos: args.eventos.get(data) ?? [],
       tarefas: porImportancia(tarefas.filter(t => t.vence === data)),
       concluidas: concluidasEm(data),
+      feitas: feitasEm(data),
     })
   }
 
@@ -407,5 +478,6 @@ export function montarSemana(args: {
     avisos: args.avisos,
     contaBasecamp: args.contaBasecamp,
     nome: args.nome ?? null,
+    eu: args.eu ?? null,
   }
 }

@@ -1,7 +1,7 @@
 // Desenha a Semana como um SVG na identidade da Hospedin. Função pura: não
 // conhece o Claude Code, então roda igual no mod, nos testes e na prévia.
 import type { Dia, Prioridade, Semana, Tarefa } from '../types'
-import { importancia, semMarcaDePrioridade } from './dados'
+import { importancia, semMarcaDePrioridade, tarefasDoTotal } from './dados'
 
 const COR = {
   roxo: '#765AA6',
@@ -666,6 +666,186 @@ function grafico(d: Desenho, semana: Semana) {
   d.y = base + 34
 }
 
+/** Um grupo de tarefas da semana (uma pessoa ou um espaço), dividido como a barra do topo. */
+export type Grupo = {
+  nome: string
+  voce: boolean
+  feitas: number
+  atrasadas: number
+  aFazer: number
+  /** A linha que soma os que passaram do limite ("3 outras pessoas"). */
+  resto?: boolean
+}
+
+const totalDo = (g: Grupo) => g.feitas + g.atrasadas + g.aFazer
+
+/** Quantas linhas cada gráfico mostra; passando disso, as últimas viram uma só. */
+const LIMITE_DE_GRUPOS = 5
+
+/**
+ * Quem pediu e em que espaço estão as tarefas que formam o total da semana.
+ * Quem pediu é quem criou a tarefa no Basecamp; as minhas viram "Você". As
+ * sem criador conhecido ficam fora de quem pediu e contam em `semCriador`.
+ */
+export function origensDaSemana(semana: Semana): { pessoas: Grupo[]; espacos: Grupo[]; semCriador: number } {
+  const pessoas = new Map<string, Grupo>()
+  const espacos = new Map<string, Grupo>()
+  let semCriador = 0
+  const somar = (mapa: Map<string, Grupo>, chave: string, nome: string, voce: boolean, estado: string) => {
+    const g = mapa.get(chave) ?? { nome, voce, feitas: 0, atrasadas: 0, aFazer: 0 }
+    if (estado === 'feita') g.feitas++
+    else if (estado === 'atrasada') g.atrasadas++
+    else g.aFazer++
+    mapa.set(chave, g)
+  }
+  for (const { tarefa, estado } of tarefasDoTotal(semana)) {
+    somar(espacos, tarefa.projeto, tarefa.projeto || 'Sem espaço', false, estado)
+    if (tarefa.criador === undefined) semCriador++
+    else {
+      const voce = tarefa.criador.id === semana.eu
+      somar(pessoas, String(tarefa.criador.id), voce ? 'Você' : tarefa.criador.nome, voce, estado)
+    }
+  }
+  const ordenar = (mapa: Map<string, Grupo>) =>
+    [...mapa.values()].sort((a, b) => totalDo(b) - totalDo(a) || a.nome.localeCompare(b.nome, 'pt-BR'))
+  return { pessoas: ordenar(pessoas), espacos: ordenar(espacos), semCriador }
+}
+
+/** Os maiores grupos e, se passar do limite, o resto somado numa linha só ("3 outras pessoas"). */
+function maiores(grupos: Grupo[], outros: (n: number) => string): Grupo[] {
+  if (grupos.length <= LIMITE_DE_GRUPOS) return grupos
+  const resto = grupos.slice(LIMITE_DE_GRUPOS - 1)
+  return [
+    ...grupos.slice(0, LIMITE_DE_GRUPOS - 1),
+    resto.reduce((soma, g) => ({
+      ...soma,
+      feitas: soma.feitas + g.feitas,
+      atrasadas: soma.atrasadas + g.atrasadas,
+      aFazer: soma.aFazer + g.aFazer,
+    }), { nome: outros(resto.length), voce: false, feitas: 0, atrasadas: 0, aFazer: 0, resto: true }),
+  ]
+}
+
+/** "12 tarefas · 5 concluídas · 2 atrasadas · 5 a fazer": a dica de uma linha. */
+function dicaDoGrupo(g: Grupo): string {
+  return [
+    `${g.nome}: ${plural(totalDo(g), 'tarefa', 'tarefas')}`,
+    ...(g.feitas > 0 ? [plural(g.feitas, 'concluída', 'concluídas')] : []),
+    ...(g.atrasadas > 0 ? [plural(g.atrasadas, 'atrasada', 'atrasadas')] : []),
+    ...(g.aFazer > 0 ? [`${g.aFazer} a fazer`] : []),
+  ].join(' · ')
+}
+
+const larguraDoNome = (g: Grupo) => larguraDoTexto(g.nome, 12.5, g.voce)
+
+/**
+ * Um gráfico de barras deitadas: o nome à esquerda, a barra dividida nas cores
+ * da barra do topo (concluídas, atrasadas, a fazer) e o total à direita. Todas
+ * na mesma escala, a do maior grupo, sobre uma trilha que mostra o quanto falta
+ * para ele. `colunaDoNome` é onde as barras começam, a mesma nos dois gráficos.
+ */
+function barrasDeitadas(d: Desenho, id: string, titulo: string, dica: string, grupos: Grupo[], nota: string, colunaDoNome: number) {
+  const xEsq = d.margem
+  const xDir = d.largura - d.margem
+  const yTitulo = d.y + 18
+  add(
+    d,
+    `<g><title>${esc(dica)}</title>`,
+    texto(xEsq, yTitulo, titulo, { tamanho: 14, peso: 700, classe: 'txt' }),
+    '</g>',
+    nota === '' ? '' : texto(xDir, yTitulo, nota, { tamanho: 11.5, classe: 'sec', ancora: 'end' }),
+  )
+
+  const maximo = Math.max(1, ...grupos.map(totalDo))
+  const larguraDoNumero = larguraDoTexto(String(maximo), 12, true) + 10
+  const xBarra = xEsq + colunaDoNome
+  const larguraUtil = xDir - larguraDoNumero - xBarra
+  const h = 8
+  const vao = 1
+
+  let y = yTitulo + 4
+  for (const [i, g] of grupos.entries()) {
+    y += 22
+    const yBarra = y - 4 - h / 2
+    const larguraDaBarra = Math.max(h, (totalDo(g) / maximo) * larguraUtil)
+    const trechos = [
+      { n: g.feitas, classe: 'feita' },
+      { n: g.atrasadas, classe: 'atrasada' },
+      { n: g.aFazer, classe: 'coluna' },
+    ].filter(t => t.n > 0)
+    const livre = larguraDaBarra - vao * (trechos.length - 1)
+    const partes: string[] = []
+    let x = xBarra
+    for (const t of trechos) {
+      const w = (t.n / totalDo(g)) * livre
+      partes.push(`<rect x="${x}" y="${yBarra}" width="${w}" height="${h}" class="${t.classe}"/>`)
+      x += w + vao
+    }
+    add(
+      d,
+      `<g><title>${esc(dicaDoGrupo(g))}</title>`,
+      texto(xEsq, y, cortar(g.nome, 12.5, colunaDoNome - 10, g.voce), {
+        tamanho: 12.5,
+        ...(g.voce ? { peso: 700 } : {}),
+        classe: g.resto === true ? 'sec' : 'txt',
+      }),
+      `<rect x="${xBarra}" y="${yBarra}" width="${larguraUtil}" height="${h}" rx="${h / 2}" class="trilha"/>`,
+      `<clipPath id="${id}-${i}"><rect x="${xBarra}" y="${yBarra}" width="${larguraDaBarra}" height="${h}" rx="${h / 2}"/></clipPath>`,
+      `<g clip-path="url(#${id}-${i})">`,
+      ...partes,
+      '</g>',
+      texto(xDir, y, String(totalDo(g)), { tamanho: 12, peso: 700, classe: 'txt', ancora: 'end' }),
+      '</g>',
+    )
+  }
+  d.y = y + 12
+}
+
+/**
+ * Quem pediu e os espaços das tarefas da semana. Quem pediu só aparece quando
+ * se sabe quem criou ao menos uma; as que faltam viram uma nota ao lado do título.
+ */
+function origens(d: Desenho, semana: Semana) {
+  const origem = origensDaSemana(semana)
+  if (origem.espacos.length === 0) return
+  const pessoas = maiores(origem.pessoas, n => `${n} outras pessoas`)
+  const espacos = maiores(origem.espacos, n => `${n} outros espaços`)
+  // O nome mais longo dos dois gráficos, até 40% da largura: as barras começam juntas.
+  const colunaDoNome = Math.min((d.largura - d.margem * 2) * 0.4, Math.max(...[...pessoas, ...espacos].map(larguraDoNome)) + 12)
+  if (pessoas.length > 0) {
+    barrasDeitadas(
+      d,
+      'pessoas',
+      'Quem pediu',
+      'Quem criou no Basecamp as tarefas da semana: concluídas, atrasadas e a fazer',
+      pessoas,
+      origem.semCriador > 0 ? `${origem.semCriador} sem autor` : '',
+      colunaDoNome,
+    )
+  }
+  barrasDeitadas(
+    d,
+    'espacos',
+    'Espaços',
+    'Em que espaço do Basecamp estão as tarefas da semana: concluídas, atrasadas e a fazer',
+    espacos,
+    '',
+    colunaDoNome,
+  )
+  d.y += 14
+}
+
+/** Quem pediu e os espaços, uma linha cada, para o terminal. */
+export function origensEmLinhas(semana: Semana): string[] {
+  const { pessoas, espacos } = origensDaSemana(semana)
+  const emLinha = (rotulo: string, grupos: Grupo[], outros: (n: number) => string) =>
+    `${rotulo}: ${maiores(grupos, outros).map(g => `${g.nome} ${totalDo(g)}`).join(' · ')}`
+  return [
+    ...(pessoas.length > 0 ? [emLinha('Quem pediu', pessoas, n => `${n} outras pessoas`)] : []),
+    ...(espacos.length > 0 ? [emLinha('Espaços', espacos, n => `${n} outros espaços`)] : []),
+  ]
+}
+
 type Linha = {
   y: number
   xEsq: number
@@ -1052,6 +1232,7 @@ export function desenharSemana(semana: Semana, opcoes: OpcoesDoPainel = {}): { s
   if (hoje !== undefined) cardDeHoje(d, semana, hoje, faixa)
   d.y += 10
   grafico(d, semana)
+  origens(d, semana)
   d.y += 4
   for (const dia of hoje === undefined ? semana.dias : semana.dias.filter(x => x.data > semana.hoje)) {
     divisoria(d)
