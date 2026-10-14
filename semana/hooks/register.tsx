@@ -112,11 +112,38 @@ async function buscarAgenda($: EngineInterface, domingo: string, hoje: string): 
   throw new Error(falhas.join(' | ') || 'nenhum conector de agenda encontrado')
 }
 
+/** Os eventos da linha do tempo, ou por que não vieram. */
+type LinhaDoTempo = { eventos: unknown[] } | { motivo: string }
+
+/** Quanto esperar antes de cada nova tentativa de ler a linha do tempo. */
+const ESPERAS_DA_LINHA_DO_TEMPO = [2_000, 5_000]
+
+/**
+ * Uma leitura da linha do tempo. Com --agent a CLI escreve o erro na saída
+ * normal, às vezes saindo com 0: só vale uma lista.
+ */
+function lerLinhaDoTempo($: EngineInterface, bin: string, limite: number): Promise<LinhaDoTempo> {
+  const argv = [bin, 'timeline', 'me', '--limit', String(limite), '--agent', '--jq', '[.[] | {kind, created_at, url}]']
+  const resumo = (texto: string) => texto.trim().split('\n')[0]?.slice(0, 120) ?? ''
+  return $.process.run(argv, { timeoutMs: 60_000 }).then(
+    (r): LinhaDoTempo => {
+      let dados: unknown = null
+      try {
+        dados = JSON.parse(r.stdout)
+      } catch {}
+      if (r.exitCode === 0 && Array.isArray(dados)) return { eventos: dados }
+      const erro = (dados as { error?: unknown } | null)?.error
+      return { motivo: (typeof erro === 'string' ? resumo(erro) : '') || resumo(r.stderr) || resumo(r.stdout) || `saiu com código ${r.exitCode}` }
+    },
+    (erro: unknown) => ({ motivo: resumo(erro instanceof Error ? erro.message : String(erro)) }),
+  )
+}
+
 type RespostasDoBasecamp = {
   pendentes: unknown[]
   concluidas: unknown
   upNext: unknown
-  linhaDoTempo: unknown
+  linhaDoTempo: LinhaDoTempo
   eu: unknown
   /** Eu como pessoa da conta, que é quem aparece como criador. */
   pessoa: unknown
@@ -159,10 +186,19 @@ async function buscarTarefas($: EngineInterface, limite: number, escopos: readon
       rodar([bin, 'people', 'show', 'me', '--json']),
       rodar([bin, 'assignments', 'completed', '--json']),
       rodar([bin, 'assignments', 'list', '--json']),
-      rodar([bin, 'timeline', 'me', '--limit', String(limite), '--agent', '--jq', '[.[] | {kind, created_at, url}]']),
+      lerLinhaDoTempo($, bin, limite),
       ...escopos.map(escopo => rodar([bin, 'assignments', 'due', escopo, '--json'])),
     ])
-    if (pendentes.some(r => r !== null)) return { pendentes, concluidas, upNext, linhaDoTempo, eu, pessoa, bin }
+    if (!pendentes.some(r => r !== null)) continue
+    // A linha do tempo é a leitura mais longa e a que mais falha de passagem
+    // (rede, API do Basecamp): com a CLI respondendo, vale tentar de novo.
+    let linha = linhaDoTempo
+    for (const espera of ESPERAS_DA_LINHA_DO_TEMPO) {
+      if ('eventos' in linha) break
+      await $.clock.sleep(espera)
+      linha = await lerLinhaDoTempo($, bin, limite)
+    }
+    return { pendentes, concluidas, upNext, linhaDoTempo: linha, eu, pessoa, bin }
   }
   throw new Error(achouCli ? AVISO_BASECAMP_SEM_LOGIN : AVISO_BASECAMP_AUSENTE)
 }
@@ -218,16 +254,24 @@ async function carregarSemana($: EngineInterface, semanas: number): Promise<Sema
     }),
     buscarTarefas($, limite, escoposDoBasecamp(semanas)).catch((erro: unknown): RespostasDoBasecamp => {
       avisos.push(erro instanceof Error ? erro.message : AVISO_BASECAMP_SEM_LOGIN)
-      return { pendentes: [], concluidas: null, upNext: null, linhaDoTempo: null, eu: null, pessoa: null, bin: null }
+      return { pendentes: [], concluidas: null, upNext: null, linhaDoTempo: { motivo: '' }, eu: null, pessoa: null, bin: null }
     }),
   ])
 
   let conclusoes: Conclusoes | undefined
-  if (Array.isArray(tarefas.linhaDoTempo)) {
-    conclusoes = lerConclusoes(salvas, tarefas.linhaDoTempo, limite, hoje)
+  const linha = tarefas.linhaDoTempo
+  if ('eventos' in linha) {
+    conclusoes = lerConclusoes(salvas, linha.eventos, limite, hoje)
     await $.store.set('conclusoes', conclusoes)
-  } else if (tarefas.pendentes.length > 0) {
-    avisos.push('Não consegui ler a linha do tempo do Basecamp; as concluídas contam pela data de vencimento.')
+  } else if (tarefas.bin !== null) {
+    // Sem a linha do tempo de agora, valem as conclusões da última leitura:
+    // só as mais recentes ficam para a próxima.
+    conclusoes = salvas
+    avisos.push(
+      salvas === undefined
+        ? `Não consegui ler a linha do tempo do Basecamp (${linha.motivo}); as concluídas contam pela data de vencimento.`
+        : `Não consegui atualizar a linha do tempo do Basecamp (${linha.motivo}); as concluídas mais recentes entram na próxima atualização.`,
+    )
   }
 
   const entrada = {

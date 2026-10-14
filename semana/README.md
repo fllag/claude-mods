@@ -79,7 +79,7 @@ Se uma fonte falhar, o painel mostra a outra e diz o que fazer, em vermelho no r
 | Não achei a CLI do Basecamp | Instale o plugin do Basecamp (passo 2 acima) e rode `basecamp auth login`. |
 | Não consegui ler o Basecamp | Rode `basecamp auth login` e tente de novo. |
 | Não consegui ler a agenda | Confira se o Google Calendar está conectado no claude.ai e abra uma sessão nova. Se o motivo falar em permissão, peça ao Claude: "libere a ferramenta list_events do Google Calendar no meu settings.json". |
-| Não consegui ler a linha do tempo | As concluídas contam pela data de vencimento. Costuma ser versão antiga da CLI: atualize o plugin `basecamp@37signals`. |
+| Não consegui ler (ou atualizar) a linha do tempo | O mod já tentou três vezes. Se tinha uma leitura anterior, usa ela e as concluídas mais recentes entram na próxima atualização; se não, as concluídas contam pela data de vencimento. Falha de passagem some sozinha. Se o aviso volta sempre, veja o motivo entre parênteses; costuma ser versão antiga da CLI: atualize o plugin `basecamp@37signals`. |
 
 Em qualquer outro caso, cole a resposta do `/semana` na conversa e peça ajuda.
 
