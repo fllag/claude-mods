@@ -5,10 +5,11 @@
 import { atom, read, update } from 'claude-code'
 import type { EngineInterface, Register } from 'claude-code'
 
-import type { Conclusoes, Semana } from '../types'
+import type { Conclusoes, Criador, Semana } from '../types'
 import {
   caminhoSalvo,
   comoConclusoes,
+  comoCriadores,
   contaDoBasecamp,
   dataLocal,
   DIAS_NA_JANELA,
@@ -16,21 +17,34 @@ import {
   escoposDoBasecamp,
   EVENTOS_NA_PRIMEIRA_LEITURA,
   EVENTOS_POR_LEITURA,
+  FILTRO_DO_CRIADOR,
+  juntarCriadores,
   lerConclusoes,
+  lerCriador,
   lerDeslocamento,
   montarSemana,
   normalizarEventos,
   normalizarTarefas,
   normalizarUpNext,
+  pessoaDoBasecamp,
   precisaDoHistorico,
   primeiroNome,
   SEMANAS_DO_RITMO,
   SEMANAS_PARA_FRENTE,
   servidoresDaAgenda,
   somarDias,
+  tarefasDoTotal,
   textoDoResultado,
 } from './dados'
-import { desenharSemana, diasEmLinhas, hojeEmLinhas, periodoDaSemana, resumoEmTexto, tituloDaSemana } from './painel'
+import {
+  desenharSemana,
+  diasEmLinhas,
+  hojeEmLinhas,
+  origensEmLinhas,
+  periodoDaSemana,
+  resumoEmTexto,
+  tituloDaSemana,
+} from './painel'
 
 const PAINEL = 'semana'
 const QUINZE_MINUTOS = 15 * 60_000
@@ -98,7 +112,17 @@ async function buscarAgenda($: EngineInterface, domingo: string, hoje: string): 
   throw new Error(falhas.join(' | ') || 'nenhum conector de agenda encontrado')
 }
 
-type RespostasDoBasecamp = { pendentes: unknown[]; concluidas: unknown; upNext: unknown; linhaDoTempo: unknown; eu: unknown }
+type RespostasDoBasecamp = {
+  pendentes: unknown[]
+  concluidas: unknown
+  upNext: unknown
+  linhaDoTempo: unknown
+  eu: unknown
+  /** Eu como pessoa da conta, que é quem aparece como criador. */
+  pessoa: unknown
+  /** O caminho da CLI que respondeu, para as leituras seguintes; null se nenhuma. */
+  bin: string | null
+}
 
 // Os avisos dizem o que fazer: quem instala o mod pode não ter nada configurado.
 const AVISO_BASECAMP_AUSENTE =
@@ -130,16 +154,49 @@ async function buscarTarefas($: EngineInterface, limite: number, escopos: readon
       .catch(() => null)
 
   for (const bin of caminhos) {
-    const [eu, concluidas, upNext, linhaDoTempo, ...pendentes] = await Promise.all([
+    const [eu, pessoa, concluidas, upNext, linhaDoTempo, ...pendentes] = await Promise.all([
       rodar([bin, 'me', '--json']),
+      rodar([bin, 'people', 'show', 'me', '--json']),
       rodar([bin, 'assignments', 'completed', '--json']),
       rodar([bin, 'assignments', 'list', '--json']),
       rodar([bin, 'timeline', 'me', '--limit', String(limite), '--agent', '--jq', '[.[] | {kind, created_at, url}]']),
       ...escopos.map(escopo => rodar([bin, 'assignments', 'due', escopo, '--json'])),
     ])
-    if (pendentes.some(r => r !== null)) return { pendentes, concluidas, upNext, linhaDoTempo, eu }
+    if (pendentes.some(r => r !== null)) return { pendentes, concluidas, upNext, linhaDoTempo, eu, pessoa, bin }
   }
   throw new Error(achouCli ? AVISO_BASECAMP_SEM_LOGIN : AVISO_BASECAMP_AUSENTE)
+}
+
+/** Quantos `basecamp show` rodam ao mesmo tempo. */
+const LEITURAS_SIMULTANEAS = 8
+
+/**
+ * Quem criou cada tarefa, por id. As listas do Basecamp não trazem o criador,
+ * então cada tarefa é aberta uma vez; o que já se sabe fica guardado, porque
+ * quem criou não muda. A que falhar fica sem criador e é tentada de novo.
+ */
+async function buscarCriadores($: EngineInterface, bin: string, ids: number[]): Promise<Record<string, Criador>> {
+  const salvos = comoCriadores(await $.store.get('criadores'))
+  const faltam = [...new Set(ids)].filter(id => salvos[String(id)] === undefined)
+  if (faltam.length === 0) return salvos
+
+  const novos: Record<string, Criador> = {}
+  let proximo = 0
+  const ler = async () => {
+    while (proximo < faltam.length) {
+      const id = faltam[proximo++] as number
+      const criador = await $.process
+        .run([bin, 'show', String(id), '--jq', FILTRO_DO_CRIADOR], { timeoutMs: 20_000 })
+        .then(r => (r.exitCode === 0 ? lerCriador(JSON.parse(r.stdout)) : null))
+        .catch(() => null)
+      if (criador !== null) novos[String(id)] = criador
+    }
+  }
+  await Promise.all(Array.from({ length: Math.min(LEITURAS_SIMULTANEAS, faltam.length) }, ler))
+
+  const todos = juntarCriadores(salvos, novos)
+  if (Object.keys(novos).length > 0) await $.store.set('criadores', todos)
+  return todos
 }
 
 /** A semana `semanas` semanas depois da de hoje: 0 é a de hoje. */
@@ -161,7 +218,7 @@ async function carregarSemana($: EngineInterface, semanas: number): Promise<Sema
     }),
     buscarTarefas($, limite, escoposDoBasecamp(semanas)).catch((erro: unknown): RespostasDoBasecamp => {
       avisos.push(erro instanceof Error ? erro.message : AVISO_BASECAMP_SEM_LOGIN)
-      return { pendentes: [], concluidas: null, upNext: null, linhaDoTempo: null, eu: null }
+      return { pendentes: [], concluidas: null, upNext: null, linhaDoTempo: null, eu: null, pessoa: null, bin: null }
     }),
   ])
 
@@ -173,7 +230,7 @@ async function carregarSemana($: EngineInterface, semanas: number): Promise<Sema
     avisos.push('Não consegui ler a linha do tempo do Basecamp; as concluídas contam pela data de vencimento.')
   }
 
-  return montarSemana({
+  const entrada = {
     agoraMs,
     deslocamento: semanas,
     eventos: normalizarEventos(agenda),
@@ -184,7 +241,13 @@ async function carregarSemana($: EngineInterface, semanas: number): Promise<Sema
     avisos,
     contaBasecamp: contaDoBasecamp(tarefas.pendentes),
     nome: primeiroNome(tarefas.eu),
-  })
+    eu: pessoaDoBasecamp(tarefas.pessoa),
+  }
+  // Primeiro a semana sem criadores, para saber quais tarefas formam o total;
+  // depois, com quem criou cada uma.
+  if (tarefas.bin === null) return montarSemana(entrada)
+  const ids = tarefasDoTotal(montarSemana(entrada)).map(t => t.tarefa.id)
+  return montarSemana({ ...entrada, criadores: await buscarCriadores($, tarefas.bin, ids) })
 }
 
 // As leituras em curso, por semana: quem pede a mesma semana espera a mesma
@@ -294,7 +357,7 @@ export const register: Register = on => {
             {tituloDaSemana(atual.nome)} · {periodoDaSemana(atual)}
           </Text>
           <Text dimColor>{resumoEmTexto(atual)}</Text>
-          {linhas.map(linha => (
+          {[...linhas, ...origensEmLinhas(atual)].map(linha => (
             <Text wrap="truncate-end">{linha}</Text>
           ))}
           {atual.avisos.map(aviso => (
