@@ -338,21 +338,15 @@ export function lerConclusoes(salvas: Conclusoes | undefined, eventos: unknown[]
   }
 }
 
-/** Quantas semanas o gráfico de colaboração mostra: a da semana e as anteriores. */
-export const SEMANAS_DE_COLABORACAO = 4
-
 /**
- * Os domingos das semanas que o gráfico de colaboração mostra: a semana
- * mostrada e as anteriores, da mais nova à mais antiga. Fica de fora a que a
- * linha do tempo não cobre inteira ou que já saiu do que fica guardado; uma
- * semana futura não tem nenhuma.
+ * O domingo da semana mostrada, se dá para contar a colaboração nela: a linha
+ * do tempo precisa cobri-la inteira, e ela não pode ter saído do que fica
+ * guardado. Uma semana futura não tem colaboração. Null quando não dá.
  */
-export function semanasDeColaboracao(hoje: string, deslocamento: number, cobertura: string): string[] {
-  if (deslocamento > 0) return []
+export function semanaDeColaboracao(hoje: string, deslocamento: number, cobertura: string): string | null {
+  if (deslocamento > 0) return null
   const domingo = somarDias(domingoDa(hoje), 7 * deslocamento)
-  const corte = corteDaLinhaDoTempo(hoje)
-  const primeiro = cobertura > corte ? cobertura : corte
-  return Array.from({ length: SEMANAS_DE_COLABORACAO }, (_, i) => somarDias(domingo, -7 * i)).filter(d => d >= primeiro)
+  return domingo >= cobertura && domingo >= corteDaLinhaDoTempo(hoje) ? domingo : null
 }
 
 /** Os comentários feitos de `domingo` a sábado. */
@@ -361,9 +355,9 @@ const comentariosDaSemana = (comentarios: Record<string, Comentario>, domingo: s
   return Object.values(comentarios).filter(c => c.dia >= domingo && c.dia <= sabado)
 }
 
-/** As conversas em que comentei nas semanas que começam nos `domingos`, sem repetir. */
-export function conversasDasSemanas(comentarios: Record<string, Comentario>, domingos: string[]): number[] {
-  return [...new Set(domingos.flatMap(domingo => comentariosDaSemana(comentarios, domingo).map(c => c.conversa)))]
+/** As conversas em que comentei na semana que começa em `domingo`, sem repetir. */
+export function conversasDaSemana(comentarios: Record<string, Comentario>, domingo: string): number[] {
+  return [...new Set(comentariosDaSemana(comentarios, domingo).map(c => c.conversa))]
 }
 
 /** O filtro do `basecamp show <id> --jq` que traz só quem criou o item e quem é responsável. */
@@ -392,25 +386,23 @@ export function deQuem(dono: Dono | undefined, eu: number): 'suas' | 'pediu' | '
   return 'outros'
 }
 
-/** As conversas em que comentei em cada semana, divididas pelo dono do item comentado. */
+/** As conversas em que comentei na semana que começa em `domingo`, divididas pelo dono do item comentado. */
 export function lerColaboracao(
   comentarios: Record<string, Comentario>,
   donos: Record<string, Dono>,
   eu: number,
-  domingos: string[],
-): Colaboracao[] {
-  return domingos.map(domingo => {
-    const daSemana = comentariosDaSemana(comentarios, domingo)
-    const conversas = new Map(daSemana.map(c => [c.conversa, c.espaco]))
-    const conta = { suas: 0, pediu: 0, outros: 0, semDono: 0 }
-    const espacosDeOutros = new Set<string>()
-    for (const [conversa, espaco] of conversas) {
-      const dono = deQuem(donos[String(conversa)], eu)
-      conta[dono]++
-      if (dono === 'outros') espacosDeOutros.add(espaco)
-    }
-    return { domingo, ...conta, comentarios: daSemana.length, espacosDeOutros: espacosDeOutros.size }
-  })
+  domingo: string,
+): Colaboracao {
+  const daSemana = comentariosDaSemana(comentarios, domingo)
+  const conversas = new Map(daSemana.map(c => [c.conversa, c.espaco]))
+  const conta = { suas: 0, pediu: 0, outros: 0, semDono: 0 }
+  const espacosDeOutros = new Set<string>()
+  for (const [conversa, espaco] of conversas) {
+    const dono = deQuem(donos[String(conversa)], eu)
+    conta[dono]++
+    if (dono === 'outros') espacosDeOutros.add(espaco)
+  }
+  return { ...conta, comentarios: daSemana.length, espacosDeOutros: espacosDeOutros.size }
 }
 
 /** Meu id de pessoa na conta, da resposta de `basecamp people show me --json`. */
@@ -581,10 +573,11 @@ export function montarSemana(args: {
 
   // A colaboração precisa saber quem sou e de quem é cada conversa.
   const comentarios = args.conclusoes?.comentarios
+  const domingoDaColaboracao = semanaDeColaboracao(hoje, deslocamento, args.conclusoes?.cobertura ?? '')
   const colaboracao =
-    comentarios === undefined || args.donos === undefined || args.eu === undefined || args.eu === null
+    comentarios === undefined || domingoDaColaboracao === null || args.donos === undefined || args.eu === undefined || args.eu === null
       ? undefined
-      : lerColaboracao(comentarios, args.donos, args.eu, semanasDeColaboracao(hoje, deslocamento, args.conclusoes?.cobertura ?? ''))
+      : lerColaboracao(comentarios, args.donos, args.eu, domingoDaColaboracao)
 
   // Fora da semana de hoje, as atrasadas são só as da semana mostrada, e o Up
   // next, que é do bloco Hoje, fica de fora.

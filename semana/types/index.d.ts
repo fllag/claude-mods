@@ -39,8 +39,6 @@ export type Dono = { criador: number; responsaveis: number[] }
 
 /** As conversas em que comentei numa semana, pelo dono do item comentado. */
 export type Colaboracao = {
-  /** O domingo da semana, AAAA-MM-DD. */
-  domingo: string
   /** Em tarefas minhas, ou em itens que criei sem passar para ninguém. */
   suas: number
   /** Em tarefas que criei e passei para outra pessoa. */
@@ -117,12 +115,11 @@ export type Semana = {
   /** Meu id de pessoa no Basecamp, para "Você" em quem pediu. */
   eu?: number | null
   /**
-   * As conversas em que comentei na semana mostrada e nas até 3 anteriores,
-   * da mais nova à mais antiga, só as que a linha do tempo cobre inteiras.
-   * Ausente numa semana futura, sem a linha do tempo ou numa leitura salva por
-   * versão anterior.
+   * As conversas em que comentei na semana mostrada. Ausente numa semana
+   * futura, numa que a linha do tempo não cobre inteira, sem a linha do tempo
+   * ou numa leitura salva por versão anterior.
    */
-  colaboracao?: Colaboracao[]
+  colaboracao?: Colaboracao
 }
 
 declare module 'claude-code' {

@@ -12,7 +12,7 @@ import {
   comoCriadores,
   comoDonos,
   contaDoBasecamp,
-  conversasDasSemanas,
+  conversasDaSemana,
   dataLocal,
   DIAS_NA_JANELA,
   domingoDa,
@@ -36,7 +36,7 @@ import {
   primeiroNome,
   SEMANAS_DO_RITMO,
   SEMANAS_PARA_FRENTE,
-  semanasDeColaboracao,
+  semanaDeColaboracao,
   servidoresDaAgenda,
   somarDias,
   tarefasDoTotal,
@@ -315,8 +315,8 @@ async function carregarSemana($: EngineInterface, semanas: number): Promise<Sema
   if (tarefas.bin === null) return montarSemana(entrada)
   const ids = tarefasDoTotal(montarSemana(entrada)).map(t => t.tarefa.id)
   const criadores = await abrirCadaUm($, tarefas.bin, ids, CRIADORES)
-  const domingos = conclusoes === undefined ? [] : semanasDeColaboracao(hoje, semanas, conclusoes.cobertura)
-  const conversas = conversasDasSemanas(conclusoes?.comentarios ?? {}, domingos)
+  const domingoDaColaboracao = conclusoes === undefined ? null : semanaDeColaboracao(hoje, semanas, conclusoes.cobertura)
+  const conversas = domingoDaColaboracao === null ? [] : conversasDaSemana(conclusoes?.comentarios ?? {}, domingoDaColaboracao)
   const donos = await abrirCadaUm($, tarefas.bin, conversas, DONOS)
   return montarSemana({ ...entrada, criadores, donos })
 }

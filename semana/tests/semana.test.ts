@@ -11,7 +11,7 @@ import {
   montarSemana,
   precisaDoHistorico,
   primeiroNome,
-  semanasDeColaboracao,
+  semanaDeColaboracao,
   semMarcaDePrioridade,
 } from '../hooks/dados'
 import {
@@ -928,29 +928,26 @@ test('a análise da semana vem depois dos dias, para não separar hoje de amanh�
   expect(posicao('Tarefas por dia')).toBeLessThan(posicao('Espaços'))
 })
 
-test('a colaboração conta as conversas em que comentei, pelo dono do item', async ($, on) => {
+test('a colaboração conta as conversas da semana em que comentei, pelo dono do item', async ($, on) => {
   const pedidos = mundo(on, { comentarios: true })
   const { text } = await $.command.run({ command: 'semana', args: '' })
 
   // Nesta semana: a 100 é minha, a 101 eu pedi, a 102 e a 103 são de outras
-  // pessoas e a 104 não abre, então fica fora da conta. Na passada, a 102 é a
-  // única fora das minhas.
-  expect(text).toBe(`${RESUMO} Colaboração: 4 conversas no Basecamp, 3 fora das suas tarefas (semana passada: 1).`)
-  // Cada conversa das semanas do gráfico é aberta uma vez, só para saber de quem é.
-  expect([...pedidos.donos].sort()).toEqual(['100', '101', '102', '103', '104', '105'])
+  // pessoas e a 104 não abre, então fica fora da conta.
+  expect(text).toBe(`${RESUMO} Colaboração: 4 conversas no Basecamp, 3 fora das suas tarefas.`)
+  // Só as conversas da semana mostrada são abertas, uma vez cada, para saber de quem são.
+  expect([...pedidos.donos].sort()).toEqual(['100', '101', '102', '103', '104'])
 
   const ui = await $.ui.mount({ ...PAINEL, surface: 'desktop' })
   const svg = String((await ui.find({ type: 'Svg' }))?.props.source)
   expect(svg).toContain('>Colaboração</text>')
-  expect(svg).toContain('>3 fora das suas tarefas</text>')
-  expect(svg).toContain('>Esta semana</text>')
-  expect(svg).toContain('>Semana passada</text>')
+  expect(svg).toContain('>4 conversas, 3 fora das suas</text>')
   expect(svg).toContain('>que você pediu</text>')
   expect(svg).toContain('>de outras pessoas</text>')
-  expect(svg).toContain(
-    '<title>Esta semana, 11 a 17 de outubro: 4 conversas (6 comentários) · 1 sua · 1 que você pediu · ' +
-      '2 de outras pessoas em 2 espaços · 1 que não deu para abrir</title>',
-  )
+  expect(svg).toContain('<title>4 conversas do Basecamp em que você comentou nesta semana · 6 comentários · 1 que não deu para abrir</title>')
+  expect(svg).toContain('<title>2 conversas em tarefas e mensagens de outras pessoas, em 2 espaços</title>')
+  // Só a semana do painel: nada de comparar com as anteriores.
+  expect(svg).not.toContain('Semana passada')
   // A análise termina na colaboração, depois dos espaços.
   expect(svg.indexOf('>Espaços</text>')).toBeLessThan(svg.indexOf('>Colaboração</text>'))
   await ui.unmount()
@@ -965,16 +962,23 @@ test('a colaboração conta as conversas em que comentei, pelo dono do item', as
   pedidos.donos.length = 0
   await $.command.run({ command: 'semana', args: '' })
   expect(pedidos.donos).toEqual(['104'])
+
+  // A semana passada tem a sua própria conta: a 102, de outra pessoa, e a 105, um documento meu.
+  pedidos.donos.length = 0
+  const passada = await $.command.run({ command: 'semana', args: 'anterior' })
+  expect(passada.text).toContain('Colaboração: 2 conversas no Basecamp, 1 fora das suas tarefas.')
+  expect(pedidos.donos).toEqual(['105'])
 })
 
-test('a colaboração só conta semanas que a linha do tempo cobre, e nunca uma futura', () => {
+test('a colaboração só conta uma semana que a linha do tempo cobre, e nunca uma futura', () => {
   const hoje = '2026-10-13' // terça
-  expect(semanasDeColaboracao(hoje, 0, '0000-01-01')).toEqual(['2026-10-11', '2026-10-04', '2026-09-27', '2026-09-20'])
-  // A linha do tempo só está completa desde 1º de outubro: a semana de 27 de setembro fica de fora.
-  expect(semanasDeColaboracao(hoje, 0, '2026-10-01')).toEqual(['2026-10-11', '2026-10-04'])
-  // Quatro semanas para trás, só o que ainda fica guardado.
-  expect(semanasDeColaboracao(hoje, -4, '0000-01-01')).toEqual(['2026-09-13', '2026-09-06'])
-  expect(semanasDeColaboracao(hoje, 1, '0000-01-01')).toEqual([])
+  expect(semanaDeColaboracao(hoje, 0, '0000-01-01')).toBe('2026-10-11')
+  // Até 4 semanas para trás, o que o /semana alcança, tudo fica guardado.
+  expect(semanaDeColaboracao(hoje, -4, '0000-01-01')).toBe('2026-09-13')
+  // A linha do tempo só está completa desde 1º de outubro: a semana de 27 de setembro fica sem conta.
+  expect(semanaDeColaboracao(hoje, -2, '2026-10-01')).toBeNull()
+  expect(semanaDeColaboracao(hoje, -1, '2026-10-01')).toBe('2026-10-04')
+  expect(semanaDeColaboracao(hoje, 1, '0000-01-01')).toBeNull()
 
   // Minha quando sou responsável, ou quando criei e não passei para ninguém.
   expect(deQuem({ criador: 8, responsaveis: [7, 9] }, 7)).toBe('suas')
@@ -1004,6 +1008,6 @@ test('a colaboração só conta semanas que a linha do tempo cobre, e nunca uma 
     avisos: [],
     contaBasecamp: null,
   })
-  expect(semConversas.colaboracao?.length).toBe(4)
+  expect(semConversas.colaboracao?.comentarios).toBe(0)
   expect(desenharSemana(semConversas, { largura: 400 }).svg).not.toContain('>Colaboração</text>')
 })
