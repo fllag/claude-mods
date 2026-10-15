@@ -24,10 +24,43 @@ export type Tarefa = {
 /** Uma tarefa do Up next do Basecamp, que pode não ter data. */
 export type Prioridade = Omit<Tarefa, 'vence'> & { vence: string | null }
 
-/** Quando cada tarefa foi concluída, lido da linha do tempo e guardado entre leituras. */
+/** Um comentário meu no Basecamp, lido da linha do tempo. */
+export type Comentario = {
+  /** AAAA-MM-DD, no fuso local. */
+  dia: string
+  /** O id do item comentado (tarefa, card, mensagem): a conversa. */
+  conversa: number
+  /** O espaço do Basecamp onde ele está. */
+  espaco: string
+}
+
+/** De quem é uma conversa: quem criou o item e quem está como responsável. */
+export type Dono = { criador: number; responsaveis: number[] }
+
+/** As conversas em que comentei numa semana, pelo dono do item comentado. */
+export type Colaboracao = {
+  /** O domingo da semana, AAAA-MM-DD. */
+  domingo: string
+  /** Em tarefas minhas, ou em itens que criei sem passar para ninguém. */
+  suas: number
+  /** Em tarefas que criei e passei para outra pessoa. */
+  pediu: number
+  /** Em tarefas e mensagens de outras pessoas. */
+  outros: number
+  /** Conversas que não deu para abrir, fora das três contas. */
+  semDono: number
+  /** Quantos comentários, somando todas as conversas. */
+  comentarios: number
+  /** Em quantos espaços estão as conversas de outras pessoas. */
+  espacosDeOutros: number
+}
+
+/** O que a linha do tempo diz, guardado entre leituras: quando cada tarefa foi concluída e o que comentei. */
 export type Conclusoes = {
   /** Dia da conclusão (AAAA-MM-DD, no fuso local) por id de tarefa. */
   dias: Record<string, string>
+  /** Meus comentários, por id; ausente numa leitura salva por versão anterior. */
+  comentarios?: Record<string, Comentario>
   /** A partir de que dia (AAAA-MM-DD) o mapa está completo. */
   cobertura: string
   /** O evento mais novo já lido, em ISO. */
@@ -83,6 +116,13 @@ export type Semana = {
   nome?: string | null
   /** Meu id de pessoa no Basecamp, para "Você" em quem pediu. */
   eu?: number | null
+  /**
+   * As conversas em que comentei na semana mostrada e nas até 3 anteriores,
+   * da mais nova à mais antiga, só as que a linha do tempo cobre inteiras.
+   * Ausente numa semana futura, sem a linha do tempo ou numa leitura salva por
+   * versão anterior.
+   */
+  colaboracao?: Colaboracao[]
 }
 
 declare module 'claude-code' {

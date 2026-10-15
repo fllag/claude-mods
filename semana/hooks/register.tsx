@@ -5,23 +5,28 @@
 import { atom, read, update } from 'claude-code'
 import type { EngineInterface, Register } from 'claude-code'
 
-import type { Conclusoes, Criador, Semana } from '../types'
+import type { Conclusoes, Semana } from '../types'
 import {
   caminhoSalvo,
   comoConclusoes,
   comoCriadores,
+  comoDonos,
   contaDoBasecamp,
+  conversasDasSemanas,
   dataLocal,
   DIAS_NA_JANELA,
   domingoDa,
   escoposDoBasecamp,
   EVENTOS_NA_PRIMEIRA_LEITURA,
   EVENTOS_POR_LEITURA,
+  FILTRO_DA_LINHA_DO_TEMPO,
   FILTRO_DO_CRIADOR,
-  juntarCriadores,
+  FILTRO_DO_DONO,
+  juntarGuardados,
   lerConclusoes,
   lerCriador,
   lerDeslocamento,
+  lerDono,
   montarSemana,
   normalizarEventos,
   normalizarTarefas,
@@ -31,12 +36,14 @@ import {
   primeiroNome,
   SEMANAS_DO_RITMO,
   SEMANAS_PARA_FRENTE,
+  semanasDeColaboracao,
   servidoresDaAgenda,
   somarDias,
   tarefasDoTotal,
   textoDoResultado,
 } from './dados'
 import {
+  colaboracaoEmLinhas,
   desenharSemana,
   diasEmLinhas,
   hojeEmLinhas,
@@ -123,7 +130,7 @@ const ESPERAS_DA_LINHA_DO_TEMPO = [2_000, 5_000]
  * normal, às vezes saindo com 0: só vale uma lista.
  */
 function lerLinhaDoTempo($: EngineInterface, bin: string, limite: number): Promise<LinhaDoTempo> {
-  const argv = [bin, 'timeline', 'me', '--limit', String(limite), '--agent', '--jq', '[.[] | {kind, created_at, url}]']
+  const argv = [bin, 'timeline', 'me', '--limit', String(limite), '--agent', '--jq', FILTRO_DA_LINHA_DO_TEMPO]
   const resumo = (texto: string) => texto.trim().split('\n')[0]?.slice(0, 120) ?? ''
   return $.process.run(argv, { timeoutMs: 60_000 }).then(
     (r): LinhaDoTempo => {
@@ -206,32 +213,47 @@ async function buscarTarefas($: EngineInterface, limite: number, escopos: readon
 /** Quantos `basecamp show` rodam ao mesmo tempo. */
 const LEITURAS_SIMULTANEAS = 8
 
+/** O que abrir item a item e onde guardar o que se leu. */
+type Abertura<T> = {
+  /** A chave no armazenamento. */
+  chave: string
+  filtro: string
+  ler: (resposta: unknown) => T | null
+  como: (valor: unknown) => Record<string, T>
+}
+
+/** Quem criou cada tarefa: as listas do Basecamp não trazem o criador. */
+const CRIADORES = { chave: 'criadores', filtro: FILTRO_DO_CRIADOR, ler: lerCriador, como: comoCriadores }
+
+/** De quem é cada conversa comentada: a linha do tempo só diz o id. */
+const DONOS = { chave: 'donos', filtro: FILTRO_DO_DONO, ler: lerDono, como: comoDonos }
+
 /**
- * Quem criou cada tarefa, por id. As listas do Basecamp não trazem o criador,
- * então cada tarefa é aberta uma vez; o que já se sabe fica guardado, porque
- * quem criou não muda. A que falhar fica sem criador e é tentada de novo.
+ * Abre cada item com `basecamp show` uma vez e guarda o que leu, por id: quem
+ * criou não muda, e o responsável raramente. O que falhar fica de fora e é
+ * tentado de novo na próxima leitura.
  */
-async function buscarCriadores($: EngineInterface, bin: string, ids: number[]): Promise<Record<string, Criador>> {
-  const salvos = comoCriadores(await $.store.get('criadores'))
+async function abrirCadaUm<T>($: EngineInterface, bin: string, ids: number[], a: Abertura<T>): Promise<Record<string, T>> {
+  const salvos = a.como(await $.store.get(a.chave))
   const faltam = [...new Set(ids)].filter(id => salvos[String(id)] === undefined)
   if (faltam.length === 0) return salvos
 
-  const novos: Record<string, Criador> = {}
+  const novos: Record<string, T> = {}
   let proximo = 0
   const ler = async () => {
     while (proximo < faltam.length) {
       const id = faltam[proximo++] as number
-      const criador = await $.process
-        .run([bin, 'show', String(id), '--jq', FILTRO_DO_CRIADOR], { timeoutMs: 20_000 })
-        .then(r => (r.exitCode === 0 ? lerCriador(JSON.parse(r.stdout)) : null))
+      const lido = await $.process
+        .run([bin, 'show', String(id), '--jq', a.filtro], { timeoutMs: 20_000 })
+        .then(r => (r.exitCode === 0 ? a.ler(JSON.parse(r.stdout)) : null))
         .catch(() => null)
-      if (criador !== null) novos[String(id)] = criador
+      if (lido !== null) novos[String(id)] = lido
     }
   }
   await Promise.all(Array.from({ length: Math.min(LEITURAS_SIMULTANEAS, faltam.length) }, ler))
 
-  const todos = juntarCriadores(salvos, novos)
-  if (Object.keys(novos).length > 0) await $.store.set('criadores', todos)
+  const todos = juntarGuardados(salvos, novos)
+  if (Object.keys(novos).length > 0) await $.store.set(a.chave, todos)
   return todos
 }
 
@@ -288,10 +310,15 @@ async function carregarSemana($: EngineInterface, semanas: number): Promise<Sema
     eu: pessoaDoBasecamp(tarefas.pessoa),
   }
   // Primeiro a semana sem criadores, para saber quais tarefas formam o total;
-  // depois, com quem criou cada uma.
+  // depois, com quem criou cada uma e de quem é cada conversa comentada. Uma
+  // abertura depois da outra, para não abrir itens demais de uma vez.
   if (tarefas.bin === null) return montarSemana(entrada)
   const ids = tarefasDoTotal(montarSemana(entrada)).map(t => t.tarefa.id)
-  return montarSemana({ ...entrada, criadores: await buscarCriadores($, tarefas.bin, ids) })
+  const criadores = await abrirCadaUm($, tarefas.bin, ids, CRIADORES)
+  const domingos = conclusoes === undefined ? [] : semanasDeColaboracao(hoje, semanas, conclusoes.cobertura)
+  const conversas = conversasDasSemanas(conclusoes?.comentarios ?? {}, domingos)
+  const donos = await abrirCadaUm($, tarefas.bin, conversas, DONOS)
+  return montarSemana({ ...entrada, criadores, donos })
 }
 
 // As leituras em curso, por semana: quem pede a mesma semana espera a mesma
@@ -401,7 +428,7 @@ export const register: Register = on => {
             {tituloDaSemana(atual.nome)} · {periodoDaSemana(atual)}
           </Text>
           <Text dimColor>{resumoEmTexto(atual)}</Text>
-          {[...linhas, ...origensEmLinhas(atual)].map(linha => (
+          {[...linhas, ...origensEmLinhas(atual), ...colaboracaoEmLinhas(atual)].map(linha => (
             <Text wrap="truncate-end">{linha}</Text>
           ))}
           {atual.avisos.map(aviso => (
