@@ -5,12 +5,13 @@
 import { atom, read, update } from 'claude-code'
 import type { EngineInterface, Register } from 'claude-code'
 
-import type { Conclusoes, Semana } from '../types'
+import type { Conclusoes, Conversa, Semana } from '../types'
 import {
   caminhoSalvo,
   comoConclusoes,
+  comentariosPorConversa,
+  comoConversas,
   comoCriadores,
-  comoDonos,
   contaDoBasecamp,
   conversasDaSemana,
   dataLocal,
@@ -21,23 +22,25 @@ import {
   EVENTOS_POR_LEITURA,
   FILTRO_DA_LINHA_DO_TEMPO,
   FILTRO_DO_CRIADOR,
-  FILTRO_DO_DONO,
+  filtroDaConversa,
   juntarGuardados,
   lerConclusoes,
+  lerConversa,
   lerCriador,
   lerDeslocamento,
-  lerDono,
   montarSemana,
   normalizarEventos,
   normalizarTarefas,
   normalizarUpNext,
   pessoaDoBasecamp,
+  precisaAbrir,
   precisaDoHistorico,
   primeiroNome,
   SEMANAS_DO_RITMO,
   SEMANAS_PARA_FRENTE,
   semanaDeColaboracao,
   servidoresDaAgenda,
+  sgidDoBasecamp,
   somarDias,
   tarefasDoTotal,
   textoDoResultado,
@@ -217,25 +220,42 @@ const LEITURAS_SIMULTANEAS = 8
 type Abertura<T> = {
   /** A chave no armazenamento. */
   chave: string
+  /** O que vai no `basecamp show` antes do filtro, além do id. */
+  opcoes?: string[]
   filtro: string
-  ler: (resposta: unknown) => T | null
+  ler: (resposta: unknown, id: number) => T | null
   como: (valor: unknown) => Record<string, T>
+  /** Se o item precisa ser aberto; sem isso, só o que nunca foi lido. */
+  precisa?: (salvo: T | undefined, id: number) => boolean
 }
 
 /** Quem criou cada tarefa: as listas do Basecamp não trazem o criador. */
 const CRIADORES = { chave: 'criadores', filtro: FILTRO_DO_CRIADOR, ler: lerCriador, como: comoCriadores }
 
-/** De quem é cada conversa comentada: a linha do tempo só diz o id. */
-const DONOS = { chave: 'donos', filtro: FILTRO_DO_DONO, ler: lerDono, como: comoDonos }
+/**
+ * De quem é cada conversa comentada e se cada comentário meu nela veio de uma
+ * menção com @: a linha do tempo só diz o id. `meus` são os meus comentários
+ * em cada conversa; a que tem um ainda não conferido é aberta de novo.
+ */
+const aberturaDasConversas = (eu: number, sgid: string, meus: Record<string, string[]>): Abertura<Conversa> => ({
+  chave: 'conversas',
+  opcoes: ['--comments'],
+  filtro: filtroDaConversa(sgid),
+  ler: (resposta, id) => lerConversa(resposta, eu, meus[String(id)] ?? []),
+  como: comoConversas,
+  precisa: (salva, id) => precisaAbrir(salva, meus[String(id)] ?? []),
+})
 
 /**
- * Abre cada item com `basecamp show` uma vez e guarda o que leu, por id: quem
- * criou não muda, e o responsável raramente. O que falhar fica de fora e é
- * tentado de novo na próxima leitura.
+ * Abre cada item com `basecamp show` e guarda o que leu, por id: quem criou
+ * não muda, e o responsável raramente. Fora o que `precisa` pedir de novo,
+ * cada item é aberto uma vez. O que falhar fica de fora e é tentado de novo
+ * na próxima leitura.
  */
 async function abrirCadaUm<T>($: EngineInterface, bin: string, ids: number[], a: Abertura<T>): Promise<Record<string, T>> {
   const salvos = a.como(await $.store.get(a.chave))
-  const faltam = [...new Set(ids)].filter(id => salvos[String(id)] === undefined)
+  const precisa = a.precisa ?? (salvo => salvo === undefined)
+  const faltam = [...new Set(ids)].filter(id => precisa(salvos[String(id)], id))
   if (faltam.length === 0) return salvos
 
   const novos: Record<string, T> = {}
@@ -244,8 +264,8 @@ async function abrirCadaUm<T>($: EngineInterface, bin: string, ids: number[], a:
     while (proximo < faltam.length) {
       const id = faltam[proximo++] as number
       const lido = await $.process
-        .run([bin, 'show', String(id), '--jq', a.filtro], { timeoutMs: 20_000 })
-        .then(r => (r.exitCode === 0 ? a.ler(JSON.parse(r.stdout)) : null))
+        .run([bin, 'show', String(id), ...(a.opcoes ?? []), '--jq', a.filtro], { timeoutMs: 20_000 })
+        .then(r => (r.exitCode === 0 ? a.ler(JSON.parse(r.stdout), id) : null))
         .catch(() => null)
       if (lido !== null) novos[String(id)] = lido
     }
@@ -310,15 +330,22 @@ async function carregarSemana($: EngineInterface, semanas: number): Promise<Sema
     eu: pessoaDoBasecamp(tarefas.pessoa),
   }
   // Primeiro a semana sem criadores, para saber quais tarefas formam o total;
-  // depois, com quem criou cada uma e de quem é cada conversa comentada. Uma
+  // depois, com quem criou cada uma e com as conversas comentadas. Uma
   // abertura depois da outra, para não abrir itens demais de uma vez.
   if (tarefas.bin === null) return montarSemana(entrada)
   const ids = tarefasDoTotal(montarSemana(entrada)).map(t => t.tarefa.id)
   const criadores = await abrirCadaUm($, tarefas.bin, ids, CRIADORES)
+  // A colaboração precisa saber quem sou, como o Basecamp me marca com @ e se
+  // a linha do tempo cobre a semana mostrada.
+  const sgid = sgidDoBasecamp(tarefas.pessoa)
+  const comentarios = conclusoes?.comentarios
   const domingoDaColaboracao = conclusoes === undefined ? null : semanaDeColaboracao(hoje, semanas, conclusoes.cobertura)
-  const conversas = domingoDaColaboracao === null ? [] : conversasDaSemana(conclusoes?.comentarios ?? {}, domingoDaColaboracao)
-  const donos = await abrirCadaUm($, tarefas.bin, conversas, DONOS)
-  return montarSemana({ ...entrada, criadores, donos })
+  if (entrada.eu === null || sgid === null || comentarios === undefined || domingoDaColaboracao === null) {
+    return montarSemana({ ...entrada, criadores })
+  }
+  const abertura = aberturaDasConversas(entrada.eu, sgid, comentariosPorConversa(comentarios))
+  const lidas = await abrirCadaUm($, tarefas.bin, conversasDaSemana(comentarios, domingoDaColaboracao), abertura)
+  return montarSemana({ ...entrada, criadores, conversas: lidas })
 }
 
 // As leituras em curso, por semana: quem pede a mesma semana espera a mesma

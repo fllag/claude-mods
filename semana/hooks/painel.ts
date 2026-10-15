@@ -392,7 +392,8 @@ function prioritarias(d: Desenho, x: number, y: number, p: Prioritarias, dica: s
 
 type Trecho = {
   n: number
-  classe: 'feita' | 'atrasada' | 'coluna' | 'excesso' | 'pediu' | 'de-outros'
+  /** A cor do quadradinho; sem ela, o item é só o número e o rótulo. */
+  classe?: 'feita' | 'atrasada' | 'coluna' | 'excesso' | 'pediu' | 'de-outros'
   rotulo: string
   dica: string
 }
@@ -450,8 +451,9 @@ function legenda(d: Desenho, y: number, itens: Trecho[]): number {
   const xDir = d.largura - d.margem
   let xl = xEsq
   for (const t of itens) {
+    const recuo = t.classe === undefined ? 0 : 14
     const larguraDoNumero = larguraDoTexto(String(t.n), 12, true)
-    const largura = 14 + larguraDoNumero + 3 + larguraDoTexto(t.rotulo, 12)
+    const largura = recuo + larguraDoNumero + 3 + larguraDoTexto(t.rotulo, 12)
     if (xl > xEsq && xl + largura > xDir) {
       xl = xEsq
       y += 18
@@ -459,9 +461,9 @@ function legenda(d: Desenho, y: number, itens: Trecho[]): number {
     add(
       d,
       `<g><title>${esc(t.dica)}</title>`,
-      amostra(xl, y - 8.5, t.classe),
-      texto(xl + 14, y, String(t.n), { tamanho: 12, peso: 700, classe: 'txt' }),
-      texto(xl + 14 + larguraDoNumero + 3, y, t.rotulo, { tamanho: 12, classe: 'sec' }),
+      t.classe === undefined ? '' : amostra(xl, y - 8.5, t.classe),
+      texto(xl + recuo, y, String(t.n), { tamanho: 12, peso: 700, classe: 'txt' }),
+      texto(xl + recuo + larguraDoNumero + 3, y, t.rotulo, { tamanho: 12, classe: 'sec' }),
       '</g>',
     )
     xl += largura + 14
@@ -896,6 +898,7 @@ function colaboracao(d: Desenho, semana: Semana) {
     `${plural(conversasDa(c), 'conversa', 'conversas')} do Basecamp em que você comentou nesta semana`,
     plural(c.comentarios, 'comentário', 'comentários'),
     ...(c.semDono > 0 ? [`${c.semDono} que não deu para abrir`] : []),
+    ...(c.chamado === undefined ? [] : [`${c.chamado} por menção com @`]),
   ].join(' · ')
   add(
     d,
@@ -929,7 +932,32 @@ function colaboracao(d: Desenho, semana: Semana) {
   ]
   const yBarra = yTitulo + 14
   barraEmpilhada(d, 'colaboracao', yBarra, trechos)
-  d.y = legenda(d, yBarra + ALTURA_DA_BARRA + 20, trechos) + 22
+  const y = legenda(d, yBarra + ALTURA_DA_BARRA + 20, trechos)
+  d.y = mencoes(d, y, c) + 22
+}
+
+/**
+ * Embaixo da legenda, de onde vieram as conversas da semana: por menção com @
+ * ou por iniciativa. Devolve a linha de base da última linha.
+ */
+function mencoes(d: Desenho, y: number, c: Colaboracao): number {
+  if (c.chamado === undefined || conversasDa(c) === 0) return y
+  return legenda(d, y + 24, [
+    {
+      n: c.chamado,
+      rotulo: 'por menção com @',
+      dica:
+        'Conversas em que alguém marcou você com @ num comentário antes da sua resposta. ' +
+        'É um mínimo: menção no corpo da tarefa e pedido por ping não entram.',
+    },
+    {
+      n: conversasDa(c) - c.chamado,
+      rotulo: 'por iniciativa',
+      dica:
+        'Conversas em que você comentou sem uma menção com @ num comentário antes. ' +
+        'Inclui as que vieram de menção no corpo da tarefa ou de ping.',
+    },
+  ])
 }
 
 /** A colaboração da semana numa linha, para o terminal. */
@@ -937,17 +965,23 @@ export function colaboracaoEmLinhas(semana: Semana): string[] {
   const c = semana.colaboracao
   if (c === undefined || conversasDa(c) === 0) return []
   return [
-    `Colaboração: ${plural(conversasDa(c), 'conversa', 'conversas')} · ${plural(c.suas, 'sua', 'suas')} · ${c.pediu} que você pediu · ${c.outros} de outras pessoas`,
+    `Colaboração: ${plural(conversasDa(c), 'conversa', 'conversas')} · ${plural(c.suas, 'sua', 'suas')} · ${c.pediu} que você pediu · ${c.outros} de outras pessoas` +
+      (c.chamado === undefined ? '' : ` · ${c.chamado} por menção com @`),
   ]
 }
 
-/** " Colaboração: 23 conversas no Basecamp, 9 fora das suas tarefas.", para o fim do resumo; vazio sem conversas. */
+/**
+ * " Colaboração: 23 conversas no Basecamp, 7 por menção com @ e 9 fora das
+ * suas tarefas.", para o fim do resumo; vazio sem conversas. Sem nenhuma
+ * menção, a frase não fala dela.
+ */
 function colaboracaoEmTexto(semana: Semana): string {
   const c = semana.colaboracao
   if (c === undefined || conversasDa(c) === 0) return ''
   const fora = foraDasSuas(c)
+  const mencao = c.chamado ? `${c.chamado} por menção com @ e ` : ''
   const onde = fora === 0 ? 'todas nas suas tarefas' : `${fora} fora das suas tarefas`
-  return ` Colaboração: ${plural(conversasDa(c), 'conversa', 'conversas')} no Basecamp, ${onde}.`
+  return ` Colaboração: ${plural(conversasDa(c), 'conversa', 'conversas')} no Basecamp, ${mencao}${onde}.`
 }
 
 type Linha = {

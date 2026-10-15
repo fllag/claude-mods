@@ -2,13 +2,17 @@ import { expect, mock, test } from 'claude-code/testing'
 import type { On } from 'claude-code'
 
 import {
+  comentariosPorConversa,
   deQuem,
-  FILTRO_DO_DONO,
+  filtroDaConversa,
   importancia,
   juntarCriadores,
+  lerChamados,
   lerConclusoes,
+  lerConversa,
   lerDeslocamento,
   montarSemana,
+  precisaAbrir,
   precisaDoHistorico,
   primeiroNome,
   semanaDeColaboracao,
@@ -103,20 +107,68 @@ const COMENTARIOS = [
   comentario(907, 105, 'Pessoal', '2026-10-06T10:00:00'),
 ]
 
-// De quem é cada conversa; a 104 não abre.
-const DONOS: Record<string, { criador: number; responsaveis: number[] }> = {
-  100: { criador: 8, responsaveis: [7] }, // tarefa minha
-  101: { criador: 7, responsaveis: [8] }, // eu pedi ao Bruno
-  102: { criador: 8, responsaveis: [9] }, // do Bruno para a Carla
-  103: { criador: 9, responsaveis: [] }, // mensagem da Carla
-  105: { criador: 7, responsaveis: [] }, // documento meu
+// Como o Basecamp marca cada pessoa numa menção com @.
+const SGID_DA_ANA = 'sgid-da-ana'
+const SGID_DO_BRUNO = 'sgid-do-bruno'
+const marca = (sgid: string) => `<bc-attachment sgid="${sgid}" content-type="application/vnd.basecamp.mention"></bc-attachment>`
+const fala = (id: number, quem: number, em: string, texto = 'Combinado.') => ({ id, em, quem, texto })
+
+// Cada conversa: de quem é e os comentários, os meus (os da linha do tempo) e
+// os dos outros, com ou sem menção. A 104 não abre.
+const CONVERSAS: Record<string, { criador: number; responsaveis: number[]; comentarios: ReturnType<typeof fala>[] }> = {
+  // Tarefa minha. O Bruno me chamou antes do 900; o 901 veio sem menção nova.
+  100: {
+    criador: 8,
+    responsaveis: [7],
+    comentarios: [
+      fala(800, 8, '2026-10-12T09:00:00', `${marca(SGID_DA_ANA)} pode olhar?`),
+      fala(900, 7, '2026-10-12T10:00:00'),
+      fala(901, 7, '2026-10-13T09:00:00'),
+    ],
+  },
+  // Eu pedi ao Bruno. A Carla marcou o Bruno, não eu.
+  101: {
+    criador: 7,
+    responsaveis: [8],
+    comentarios: [fala(801, 9, '2026-10-12T10:30:00', `${marca(SGID_DO_BRUNO)} e aí?`), fala(902, 7, '2026-10-12T11:00:00')],
+  },
+  // Do Bruno para a Carla. A menção chamou o 906, na semana passada; o 903 veio sem nova.
+  102: {
+    criador: 8,
+    responsaveis: [9],
+    comentarios: [
+      fala(802, 8, '2026-10-06T09:00:00', `${marca(SGID_DA_ANA)} tem um minuto?`),
+      fala(906, 7, '2026-10-07T10:00:00'),
+      fala(903, 7, '2026-10-12T12:00:00'),
+    ],
+  },
+  // Mensagem da Carla. Ela me marcou depois do meu comentário: ainda não respondi.
+  103: {
+    criador: 9,
+    responsaveis: [],
+    comentarios: [fala(904, 7, '2026-10-13T08:00:00'), fala(803, 9, '2026-10-13T09:30:00', `${marca(SGID_DA_ANA)} viu?`)],
+  },
+  // Documento meu.
+  105: { criador: 7, responsaveis: [], comentarios: [fala(907, 7, '2026-10-06T10:00:00')] },
+}
+
+/**
+ * O que o `basecamp show <id> --comments --jq filtroDaConversa(sgid)` responde:
+ * o filtro diz qual sgid procurar, e cada comentário volta sem o texto.
+ */
+function conversaFiltrada(id: string, filtro: string) {
+  const conversa = CONVERSAS[id]
+  const sgid = JSON.parse(filtro.match(/contains\(("[^"]*")\)/)?.[1] ?? '""') as string
+  if (conversa === undefined || sgid === '') return undefined
+  const { comentarios, ...dono } = conversa
+  return { ...dono, comentarios: comentarios.map(({ texto, ...c }) => ({ ...c, chama: texto.includes(sgid) })) }
 }
 
 // No Up next, uma tarefa que venceu na segunda passada.
 const UP_NEXT = [{ id: 50, content: 'Revisar metas do trimestre', due_on: '2026-10-05', bucket: { name: 'Pessoal' } }]
 
 // Quem criou cada tarefa. Ana (pessoa 7) é quem está logada; a 11 não abre.
-const EU = { id: 7, name: 'Ana Teste' }
+const EU = { id: 7, name: 'Ana Teste', attachable_sgid: SGID_DA_ANA }
 const CRIADORES: Record<string, { id: number; nome: string }> = {
   1: { id: 7, nome: 'Ana Teste' },
   2: { id: 7, nome: 'Ana Teste' },
@@ -149,7 +201,7 @@ type Mundo = {
  */
 function mundo(on: On, { agenda: agendaFunciona = true, basecamp = 'ok', falhasDaLinhaDoTempo = 0, guardado, comentarios = false }: Mundo = {}) {
   const relogio = mock.clock(on, { now: AGORA })
-  const pedidos = { dias: [] as string[], escopos: [] as string[], criadores: [] as string[], donos: [] as string[], linhasDoTempo: 0, relogio }
+  const pedidos = { dias: [] as string[], escopos: [] as string[], criadores: [] as string[], conversas: [] as string[], linhasDoTempo: 0, relogio }
   mock.store(on, guardado)
   mock.env(on, { HOME: '/Users/teste' })
   on('tool.list', () => ({
@@ -170,11 +222,11 @@ function mundo(on: On, { agenda: agendaFunciona = true, basecamp = 'ok', falhasD
     if (basecamp === 'sem-login') return { value: { exitCode: 1, stdout: '', stderr: 'not authenticated' } }
     const [, grupo, sub, escopo] = e.argv
     if (grupo === 'assignments' && sub === 'due') pedidos.escopos.push(escopo ?? '')
-    // O show vem com --jq: só o dono da conversa, ou só quem criou, sem o envelope.
-    if (grupo === 'show' && e.argv[4] === FILTRO_DO_DONO) {
-      pedidos.donos.push(sub ?? '')
-      const dono = DONOS[sub ?? '']
-      return { value: { exitCode: dono === undefined ? 1 : 0, stdout: JSON.stringify(dono ?? null), stderr: '' } }
+    // O show vem com --jq, sem o envelope: a conversa com os comentários, ou só quem criou.
+    if (grupo === 'show' && e.argv[3] === '--comments' && e.argv[4] === '--jq') {
+      pedidos.conversas.push(sub ?? '')
+      const conversa = conversaFiltrada(sub ?? '', e.argv[5] ?? '')
+      return { value: { exitCode: conversa === undefined ? 1 : 0, stdout: JSON.stringify(conversa ?? null), stderr: '' } }
     }
     if (grupo === 'show') {
       pedidos.criadores.push(sub ?? '')
@@ -933,10 +985,10 @@ test('a colaboração conta as conversas da semana em que comentei, pelo dono do
   const { text } = await $.command.run({ command: 'semana', args: '' })
 
   // Nesta semana: a 100 é minha, a 101 eu pedi, a 102 e a 103 são de outras
-  // pessoas e a 104 não abre, então fica fora da conta.
-  expect(text).toBe(`${RESUMO} Colaboração: 4 conversas no Basecamp, 3 fora das suas tarefas.`)
-  // Só as conversas da semana mostrada são abertas, uma vez cada, para saber de quem são.
-  expect([...pedidos.donos].sort()).toEqual(['100', '101', '102', '103', '104'])
+  // pessoas e a 104 não abre, então fica fora da conta. Só a 100 veio de menção.
+  expect(text).toBe(`${RESUMO} Colaboração: 4 conversas no Basecamp, 1 por menção com @ e 3 fora das suas tarefas.`)
+  // Só as conversas da semana mostrada são abertas, uma vez cada, com os comentários.
+  expect([...pedidos.conversas].sort()).toEqual(['100', '101', '102', '103', '104'])
 
   const ui = await $.ui.mount({ ...PAINEL, surface: 'desktop' })
   const svg = String((await ui.find({ type: 'Svg' }))?.props.source)
@@ -944,30 +996,109 @@ test('a colaboração conta as conversas da semana em que comentei, pelo dono do
   expect(svg).toContain('>4 conversas, 3 fora das suas</text>')
   expect(svg).toContain('>que você pediu</text>')
   expect(svg).toContain('>de outras pessoas</text>')
-  expect(svg).toContain('<title>4 conversas do Basecamp em que você comentou nesta semana · 6 comentários · 1 que não deu para abrir</title>')
+  expect(svg).toContain(
+    '<title>4 conversas do Basecamp em que você comentou nesta semana · 6 comentários · 1 que não deu para abrir · ' +
+      '1 por menção com @</title>',
+  )
   expect(svg).toContain('<title>2 conversas em tarefas e mensagens de outras pessoas, em 2 espaços</title>')
   // Só a semana do painel: nada de comparar com as anteriores.
   expect(svg).not.toContain('Semana passada')
+  // Embaixo da legenda, de onde vieram as 4 conversas: 1 por menção, 3 por iniciativa.
+  expect(svg).toMatch(/<title>Conversas em que alguém marcou você com @[^<]*É um mínimo[^<]*<\/title>[^]*?>1<\/text>[^]*?>por menção com @<\/text>/)
+  expect(svg).toMatch(/>3<\/text><text [^>]*>por iniciativa<\/text>/)
+  expect(svg.indexOf('>de outras pessoas</text>')).toBeLessThan(svg.indexOf('>por menção com @</text>'))
   // A análise termina na colaboração, depois dos espaços.
   expect(svg.indexOf('>Espaços</text>')).toBeLessThan(svg.indexOf('>Colaboração</text>'))
   await ui.unmount()
 
   const terminal = await $.ui.mount({ ...PAINEL, surface: 'terminal' })
   expect(
-    await terminal.find({ type: 'Text', text: /^Colaboração: 4 conversas · 1 sua · 1 que você pediu · 2 de outras pessoas$/ }),
+    await terminal.find({
+      type: 'Text',
+      text: /^Colaboração: 4 conversas · 1 sua · 1 que você pediu · 2 de outras pessoas · 1 por menção com @$/,
+    }),
   ).toBeDefined()
   await terminal.unmount()
 
-  // De quem é cada conversa fica guardado: a próxima leitura só tenta de novo a que não abriu.
-  pedidos.donos.length = 0
+  // Cada conversa fica guardada: a próxima leitura só tenta de novo a que não abriu.
+  pedidos.conversas.length = 0
   await $.command.run({ command: 'semana', args: '' })
-  expect(pedidos.donos).toEqual(['104'])
+  expect(pedidos.conversas).toEqual(['104'])
 
-  // A semana passada tem a sua própria conta: a 102, de outra pessoa, e a 105, um documento meu.
-  pedidos.donos.length = 0
+  // A semana passada tem a sua própria conta: a 102, de outra pessoa, e a 105,
+  // um documento meu. A menção que chamou o 906 conta lá. A 102 já foi aberta
+  // nesta semana, com todos os meus comentários: só a 105 abre.
+  pedidos.conversas.length = 0
   const passada = await $.command.run({ command: 'semana', args: 'anterior' })
-  expect(passada.text).toContain('Colaboração: 2 conversas no Basecamp, 1 fora das suas tarefas.')
-  expect(pedidos.donos).toEqual(['105'])
+  expect(passada.text).toContain('Colaboração: 2 conversas no Basecamp, 1 por menção com @ e 1 fora das suas tarefas.')
+  expect(pedidos.conversas).toEqual(['105'])
+})
+
+test('a conversa só é aberta de novo quando tem comentário meu ainda não conferido', async ($, on) => {
+  const pedidos = mundo(on, {
+    comentarios: true,
+    guardado: {
+      conversas: {
+        // Lida antes do 901: abre de novo para conferir o 901.
+        100: { criador: 8, responsaveis: [7], chamados: { 900: true } },
+        101: { criador: 7, responsaveis: [8], chamados: { 902: false } },
+        102: { criador: 8, responsaveis: [9], chamados: { 903: false, 906: true } },
+        // Guardada sem os comentários: abre de novo.
+        103: { criador: 9, responsaveis: [] },
+        105: { criador: 7, responsaveis: [], chamados: { 907: false } },
+      },
+    },
+  })
+  const { text } = await $.command.run({ command: 'semana', args: '' })
+  expect([...pedidos.conversas].sort()).toEqual(['100', '103', '104'])
+  expect(text).toContain('Colaboração: 4 conversas no Basecamp, 1 por menção com @ e 3 fora das suas tarefas')
+  // O que se leu fica guardado: na próxima, só a que não abre.
+  pedidos.conversas.length = 0
+  await $.command.run({ command: 'semana', args: '' })
+  expect(pedidos.conversas).toEqual(['104'])
+})
+
+test('um comentário meu é chamado quando alguém me marca com @ depois do meu anterior', () => {
+  const ana = 7
+  const c = (id: number, quem: number, em: string, chama = false) => ({ id, em, quem, chama })
+
+  // Fora de ordem, como pode vir: o que vale é a hora.
+  expect(
+    lerChamados(
+      [
+        c(3, ana, '2026-10-12T12:00:00Z'),
+        c(1, 8, '2026-10-12T09:00:00Z', true),
+        c(2, ana, '2026-10-12T10:00:00Z'),
+        c(5, ana, '2026-10-13T10:00:00Z'),
+        c(4, 9, '2026-10-13T09:00:00Z', true),
+        c(6, 8, '2026-10-13T11:00:00Z', true),
+      ],
+      ana,
+    ),
+  ).toEqual({ 2: true, 3: false, 5: true })
+  // Eu me marcar não conta; uma menção em comentário de outra pessoa sem o meu sgid também não.
+  expect(lerChamados([c(1, ana, '2026-10-12T09:00:00Z', true), c(2, 8, '2026-10-12T09:30:00Z'), c(3, ana, '2026-10-12T10:00:00Z')], ana)).toEqual({
+    1: false,
+    3: false,
+  })
+
+  // O filtro procura o meu sgid, com aspas de JSON, e não traz o texto.
+  expect(filtroDaConversa('abc')).toContain('contains("abc")')
+  expect(filtroDaConversa('abc')).not.toContain('content}')
+
+  // Um comentário meu que não voltou no show (além dos 100) fica como não chamado.
+  const resposta = { criador: 8, responsaveis: [ana], comentarios: [c(1, 8, '2026-10-12T09:00:00Z', true), c(2, ana, '2026-10-12T10:00:00Z')] }
+  expect(lerConversa(resposta, ana, ['2', '99'])).toEqual({ criador: 8, responsaveis: [ana], chamados: { 2: true, 99: false } })
+  expect(lerConversa({ criador: 8, responsaveis: [] }, ana, ['2'])).toBeNull()
+
+  // A conversa abre de novo só quando tem comentário meu ainda não conferido.
+  const lida = { criador: 8, responsaveis: [ana], chamados: { 2: true } }
+  expect(precisaAbrir(lida, ['2'])).toBe(false)
+  expect(precisaAbrir(lida, ['2', '3'])).toBe(true)
+  expect(precisaAbrir(undefined, [])).toBe(true)
+  expect(comentariosPorConversa({ 1: { dia: '2026-10-12', conversa: 100, espaco: 'A' }, 2: { dia: '2026-10-13', conversa: 100, espaco: 'A' } })).toEqual({
+    100: ['1', '2'],
+  })
 })
 
 test('a colaboração só conta uma semana que a linha do tempo cobre, e nunca uma futura', () => {
@@ -1003,7 +1134,7 @@ test('a colaboração só conta uma semana que a linha do tempo cobre, e nunca u
     eventos: new Map(),
     tarefas: [],
     conclusoes: lerConclusoes(undefined, [], 1500, hoje),
-    donos: {},
+    conversas: {},
     eu: 7,
     avisos: [],
     contaBasecamp: null,
