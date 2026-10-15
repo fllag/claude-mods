@@ -53,6 +53,7 @@ const ESTILO = `
   .atrasada { fill: ${COR.coral}; }
   .pediu { fill: ${COR.ciano}; }
   .de-outros { fill: ${COR.magenta}; }
+  .suave { fill: ${COR.roxo}; fill-opacity: 0.35; }
   .media { stroke: ${COR.textoSec}; }
   .pilula { fill: ${COR.roxo}; }
   .pilula-vazada { fill: none; stroke: ${COR.textoSec}; }
@@ -398,7 +399,7 @@ type Trecho = {
   dica: string
 }
 
-/** O quadradinho da legenda; o do excesso leva as listras por cima do roxo. */
+/** O quadradinho da legenda; o do excesso leva o tom claro por cima do roxo. */
 const amostra = (x: number, y: number, classe: string) =>
   classe === 'excesso'
     ? `<rect x="${x}" y="${y}" width="9" height="9" rx="2" class="coluna"/><rect x="${x}" y="${y}" width="9" height="9" rx="2" fill="url(#excesso)"/>`
@@ -559,7 +560,7 @@ function numeros(d: Desenho, semana: Semana) {
 
 const ABREVIADOS = ['dom', 'seg', 'ter', 'qua', 'qui', 'sex', 'sáb']
 
-/** Listras sobre a parte da coluna que fica acima da linha do ritmo. */
+/** Um tom mais claro sobre a parte da coluna que fica acima da linha do ritmo. */
 function hachura(x: number, base: number, largura: number, altura: number, yRitmo: number | null): string {
   if (yRitmo === null || altura <= 0) return ''
   const topo = base - altura
@@ -573,8 +574,8 @@ function hachura(x: number, base: number, largura: number, altura: number, yRitm
 }
 
 const DEFINICOES =
-  '<defs><pattern id="excesso" width="5" height="5" patternUnits="userSpaceOnUse" patternTransform="rotate(45)">' +
-  `<rect width="2" height="5" fill="${COR.branco}" fill-opacity="0.6"/></pattern></defs>`
+  '<defs><pattern id="excesso" width="5" height="5" patternUnits="userSpaceOnUse">' +
+  `<rect width="5" height="5" fill="${COR.branco}" fill-opacity="0.5"/></pattern></defs>`
 
 /** Um trecho de coluna; só o de cima tem a ponta arredondada. */
 function trecho(x: number, base: number, largura: number, altura: number, classe: string, ponta: boolean): string {
@@ -619,7 +620,7 @@ function grafico(d: Desenho, semana: Semana) {
     d,
     texto(xEsq, yTitulo, 'Tarefas por dia', { tamanho: 14, peso: 700, classe: 'txt' }),
     `<g><title>${esc(dicaLinha)}</title>`,
-    `<line x1="${xRotulo - 18}" x2="${xRotulo - 6}" y1="${yTitulo - 4}" y2="${yTitulo - 4}" class="media" stroke-width="1.5"/>`,
+    `<line x1="${xRotulo - 18}" x2="${xRotulo - 6}" y1="${yTitulo - 4}" y2="${yTitulo - 4}" class="media" stroke-width="1" stroke-dasharray="4 3"/>`,
     texto(xDir, yTitulo, rotuloLinha, { tamanho: 11.5, classe: 'sec', ancora: 'end' }),
     '</g>',
   )
@@ -666,7 +667,7 @@ function grafico(d: Desenho, semana: Semana) {
   add(
     d,
     `<line x1="${xEsq}" x2="${xDir}" y1="${base}" y2="${base}" class="linha" stroke-width="1"/>`,
-    `<line x1="${xEsq}" x2="${xDir}" y1="${yLinha}" y2="${yLinha}" class="media" stroke-width="1"/>`,
+    `<line x1="${xEsq}" x2="${xDir}" y1="${yLinha}" y2="${yLinha}" class="media" stroke-width="1" stroke-dasharray="4 3"/>`,
   )
   const maisCarregado = Math.max(...totais)
   for (const { centro, topo, dia, feitas, faltam } of topos) {
@@ -678,8 +679,7 @@ function grafico(d: Desenho, semana: Semana) {
       d,
       texto(centro, topo - 5, String(total), {
         tamanho: 11.5,
-        ...(total === maisCarregado && total > 0 ? { peso: 700 } : {}),
-        classe: total === 0 ? 'sec halo' : 'txt halo',
+        ...((ehHoje || total === maisCarregado) && total > 0 ? { peso: 700, classe: 'txt halo' } : { classe: 'sec halo' }),
         ancora: 'middle',
       }),
       texto(centro, base + 15, ehHoje ? 'hoje' : (ABREVIADOS[p.semana] ?? ''), {
@@ -709,7 +709,7 @@ export type Grupo = {
 const totalDo = (g: Grupo) => g.feitas + g.atrasadas + g.aFazer
 
 /** Quantas linhas cada gráfico mostra; passando disso, as últimas viram uma só. */
-const LIMITE_DE_GRUPOS = 5
+const LIMITE_DE_GRUPOS = 4
 
 /**
  * Quem pediu e em que espaço estão as tarefas que formam o total da semana.
@@ -765,17 +765,16 @@ function dicaDoGrupo(g: Grupo): string {
   ].join(' · ')
 }
 
-const larguraDoNome = (g: Grupo) => larguraDoTexto(g.nome, 12.5, g.voce)
-
 /**
- * Um gráfico de barras deitadas: o nome à esquerda, a barra dividida nas cores
- * da barra do topo (concluídas, atrasadas, a fazer) e o total à direita. Todas
- * na mesma escala, a do maior grupo, sobre uma trilha que mostra o quanto falta
- * para ele. `colunaDoNome` é onde as barras começam, a mesma nos dois gráficos.
+ * Um ranking: em cada linha, o nome à esquerda e o total à direita, com uma
+ * barra fina embaixo, numa cor só e na largura toda, na escala do maior. A
+ * linha que soma o resto fica em roxo claro. Como concluídas, atrasadas e a
+ * fazer já estão na barra do topo, aqui elas ficam só na dica.
  */
-function barrasDeitadas(d: Desenho, id: string, titulo: string, dica: string, grupos: Grupo[], nota: string, colunaDoNome: number) {
+function barrasDeitadas(d: Desenho, titulo: string, dica: string, grupos: Grupo[], nota: string) {
   const xEsq = d.margem
   const xDir = d.largura - d.margem
+  const util = xDir - xEsq
   const yTitulo = d.y + 18
   add(
     d,
@@ -784,50 +783,27 @@ function barrasDeitadas(d: Desenho, id: string, titulo: string, dica: string, gr
     '</g>',
     nota === '' ? '' : texto(xDir, yTitulo, nota, { tamanho: 11.5, classe: 'sec', ancora: 'end' }),
   )
-
   const maximo = Math.max(1, ...grupos.map(totalDo))
-  const larguraDoNumero = larguraDoTexto(String(maximo), 12, true) + 10
-  const xBarra = xEsq + colunaDoNome
-  const larguraUtil = xDir - larguraDoNumero - xBarra
-  const h = 8
-  const vao = 1
-
-  let y = yTitulo + 4
-  for (const [i, g] of grupos.entries()) {
-    y += 22
-    const yBarra = y - 4 - h / 2
-    const larguraDaBarra = Math.max(h, (totalDo(g) / maximo) * larguraUtil)
-    const trechos = [
-      { n: g.feitas, classe: 'feita' },
-      { n: g.atrasadas, classe: 'atrasada' },
-      { n: g.aFazer, classe: 'coluna' },
-    ].filter(t => t.n > 0)
-    const livre = larguraDaBarra - vao * (trechos.length - 1)
-    const partes: string[] = []
-    let x = xBarra
-    for (const t of trechos) {
-      const w = (t.n / totalDo(g)) * livre
-      partes.push(`<rect x="${x}" y="${yBarra}" width="${w}" height="${h}" class="${t.classe}"/>`)
-      x += w + vao
-    }
+  const h = 6
+  let y = yTitulo - 4
+  for (const g of grupos) {
+    y += 28
+    const total = totalDo(g)
+    const largura = Math.max(h, (total / maximo) * util)
     add(
       d,
       `<g><title>${esc(dicaDoGrupo(g))}</title>`,
-      texto(xEsq, y, cortar(g.nome, 12.5, colunaDoNome - 10, g.voce), {
+      texto(xEsq, y, cortar(g.nome, 12.5, util - 40, g.voce), {
         tamanho: 12.5,
         ...(g.voce ? { peso: 700 } : {}),
         classe: g.resto === true ? 'sec' : 'txt',
       }),
-      `<rect x="${xBarra}" y="${yBarra}" width="${larguraUtil}" height="${h}" rx="${h / 2}" class="trilha"/>`,
-      `<clipPath id="${id}-${i}"><rect x="${xBarra}" y="${yBarra}" width="${larguraDaBarra}" height="${h}" rx="${h / 2}"/></clipPath>`,
-      `<g clip-path="url(#${id}-${i})">`,
-      ...partes,
-      '</g>',
-      texto(xDir, y, String(totalDo(g)), { tamanho: 12, peso: 700, classe: 'txt', ancora: 'end' }),
+      texto(xDir, y, String(total), { tamanho: 12, peso: 700, classe: 'txt', ancora: 'end' }),
+      `<rect x="${xEsq}" y="${y + 5}" width="${largura}" height="${h}" rx="${h / 2}" class="${g.resto === true ? 'suave' : 'coluna'}"/>`,
       '</g>',
     )
   }
-  d.y = y + 12
+  d.y = y + 5 + h + 14
 }
 
 /**
@@ -839,28 +815,16 @@ function origens(d: Desenho, semana: Semana) {
   if (origem.espacos.length === 0) return
   const pessoas = maiores(origem.pessoas, n => `${n} outras pessoas`)
   const espacos = maiores(origem.espacos, n => `${n} outros espaços`)
-  // O nome mais longo dos dois gráficos, até 40% da largura: as barras começam juntas.
-  const colunaDoNome = Math.min((d.largura - d.margem * 2) * 0.4, Math.max(...[...pessoas, ...espacos].map(larguraDoNome)) + 12)
   if (pessoas.length > 0) {
     barrasDeitadas(
       d,
-      'pessoas',
       'Quem pediu',
-      'Quem criou no Basecamp as tarefas da semana: concluídas, atrasadas e a fazer',
+      'Quem criou no Basecamp as tarefas da semana',
       pessoas,
       origem.semCriador > 0 ? `${origem.semCriador} sem autor` : '',
-      colunaDoNome,
     )
   }
-  barrasDeitadas(
-    d,
-    'espacos',
-    'Espaços',
-    'Em que espaço do Basecamp estão as tarefas da semana: concluídas, atrasadas e a fazer',
-    espacos,
-    '',
-    colunaDoNome,
-  )
+  barrasDeitadas(d, 'Espaços', 'Em que espaço do Basecamp estão as tarefas da semana', espacos, '')
   d.y += 14
 }
 
@@ -884,11 +848,12 @@ const conversasNoChat = (c: Colaboracao) => c.chat?.conversas ?? 0
 
 /**
  * Colaboração: as conversas do Basecamp em que comentei na semana mostrada,
- * numa barra dividida pelo dono do item: minhas, que eu pedi a alguém e de
- * outras pessoas. Ao lado do título, o total e quantas ficaram fora das minhas
- * tarefas; embaixo, de onde vieram e quantas conversas tive no chat dos
- * projetos. Sem nenhuma conversa, nem no chat, não aparece. Para ver outra
- * semana, o /semana anterior ou -N: o bloco segue a semana do painel.
+ * numa barra dividida pelo dono do item. O que está fora das minhas tarefas
+ * vem primeiro (de outras pessoas, depois o que eu pedi) e é o destaque ao
+ * lado do título. Embaixo, em selos, quantas vieram de menção com @ e quantas
+ * conversas tive no chat dos projetos, que fica fora da barra porque um chat
+ * não tem dono. Sem nenhuma conversa, nem no chat, não aparece. Para ver
+ * outra semana, o /semana anterior ou -N: o bloco segue a semana do painel.
  */
 function colaboracao(d: Desenho, semana: Semana) {
   const c = semana.colaboracao
@@ -897,70 +862,102 @@ function colaboracao(d: Desenho, semana: Semana) {
   const xDir = d.largura - d.margem
   const yTitulo = d.y + 18
   const fora = foraDasSuas(c)
-  const nota =
-    conversasDa(c) === 0 ? '' : `${plural(conversasDa(c), 'conversa', 'conversas')}, ${fora === 0 ? 'todas suas' : `${fora} fora das suas`}`
+  const destaque = conversasDa(c) === 0 ? '' : fora === 0 ? 'todas suas' : `${fora} fora das suas`
+  const resto = conversasDa(c) === 0 ? '' : ` de ${plural(conversasDa(c), 'conversa', 'conversas')}`
   const dica = [
     `${plural(conversasDa(c), 'conversa', 'conversas')} do Basecamp em que você comentou nesta semana`,
     plural(c.comentarios, 'comentário', 'comentários'),
     ...(c.semDono > 0 ? [`${c.semDono} que não deu para abrir`] : []),
-    ...(c.chamado === undefined ? [] : [`${c.chamado} por menção com @`]),
   ].join(' · ')
   add(
     d,
     `<g><title>${esc(dica)}</title>`,
     texto(xEsq, yTitulo, 'Colaboração', { tamanho: 14, peso: 700, classe: 'txt' }),
-    texto(xDir, yTitulo, nota, { tamanho: 11.5, classe: 'sec', ancora: 'end' }),
+    `<text x="${xDir}" y="${yTitulo}" font-size="12" text-anchor="end"><tspan font-weight="700" class="txt">${esc(destaque)}</tspan>` +
+      `<tspan class="sec">${esc(resto)}</tspan></text>`,
     '</g>',
   )
 
-  const trechos: Trecho[] = [
-    {
-      n: c.suas,
-      classe: 'coluna',
-      rotulo: c.suas === 1 ? 'sua' : 'suas',
-      dica: `${plural(c.suas, 'conversa', 'conversas')} em tarefas suas, ou em itens que você criou sem passar para ninguém`,
-    },
-    {
-      n: c.pediu,
-      classe: 'pediu',
-      rotulo: 'que você pediu',
-      dica: `${plural(c.pediu, 'conversa', 'conversas')} em tarefas que você criou e passou para outra pessoa`,
-    },
-    {
-      n: c.outros,
-      classe: 'de-outros',
-      rotulo: 'de outras pessoas',
-      dica:
-        `${plural(c.outros, 'conversa', 'conversas')} em tarefas e mensagens de outras pessoas` +
-        (c.outros > 0 ? `, em ${plural(c.espacosDeOutros, 'espaço', 'espaços')}` : ''),
-    },
-  ]
   let y = yTitulo
   if (conversasDa(c) > 0) {
-    const yBarra = yTitulo + 14
+    const trechos: Trecho[] = [
+      {
+        n: c.outros,
+        classe: 'de-outros',
+        rotulo: 'de outras pessoas',
+        dica:
+          `${plural(c.outros, 'conversa', 'conversas')} em tarefas e mensagens de outras pessoas` +
+          (c.outros > 0 ? `, em ${plural(c.espacosDeOutros, 'espaço', 'espaços')}` : ''),
+      },
+      {
+        n: c.pediu,
+        classe: 'pediu',
+        rotulo: 'que você pediu',
+        dica: `${plural(c.pediu, 'conversa', 'conversas')} em tarefas que você criou e passou para outra pessoa`,
+      },
+      {
+        n: c.suas,
+        classe: 'coluna',
+        rotulo: c.suas === 1 ? 'sua' : 'suas',
+        dica: `${plural(c.suas, 'conversa', 'conversas')} em tarefas suas, ou em itens que você criou sem passar para ninguém`,
+      },
+    ]
+    const yBarra = yTitulo + 16
     barraEmpilhada(d, 'colaboracao', yBarra, trechos)
-    y = mencoes(d, legenda(d, yBarra + ALTURA_DA_BARRA + 20, trechos), c)
+    y = legenda(d, yBarra + ALTURA_DA_BARRA + 20, trechos)
   }
-  d.y = chatDosProjetos(d, y, c) + 22
+  const chat = conversasNoChat(c)
+  const itens = [
+    ...(c.chamado
+      ? [
+          {
+            n: c.chamado,
+            rotulo: 'por menção com @',
+            dica:
+              'Conversas em que alguém marcou você com @ num comentário antes da sua resposta. ' +
+              'É um mínimo: menção no corpo da tarefa e pedido por ping não entram.',
+          },
+        ]
+      : []),
+    ...(chat > 0
+      ? [
+          {
+            n: chat,
+            rotulo: chat === 1 ? 'conversa no chat' : 'conversas no chat',
+            dica:
+              `Blocos de conversa no chat dos projetos em que você falou nesta semana, em ${plural(c.chat?.espacos ?? 0, 'espaço', 'espaços')}. ` +
+              'O Basecamp junta as mensagens de um período num bloco só. Pings não entram.',
+          },
+        ]
+      : []),
+  ]
+  d.y = (itens.length > 0 ? selos(d, y + 28, itens) : y) + 12
 }
 
-/**
- * Por último, as conversas no chat dos projetos (Campfire). Ficam fora da
- * barra: um chat não tem dono, e o Basecamp junta as mensagens de um período
- * num bloco só. Devolve a linha de base da última linha.
- */
-function chatDosProjetos(d: Desenho, y: number, c: Colaboracao): number {
-  const chat = c.chat
-  if (chat === undefined || chat.conversas === 0) return y
-  return legenda(d, y + 24, [
-    {
-      n: chat.conversas,
-      rotulo: `${chat.conversas === 1 ? 'conversa' : 'conversas'} no chat dos projetos, em ${plural(chat.espacos, 'espaço', 'espaços')}`,
-      dica:
-        'Blocos de conversa no chat dos projetos em que você falou nesta semana. O Basecamp junta as ' +
-        'mensagens de um período num bloco só, então o número não é de mensagens. Pings não entram.',
-    },
-  ])
+/** Selos: o número em negrito e o rótulo numa pílula clara, lado a lado. Devolve a base da última. */
+function selos(d: Desenho, y: number, itens: { n: number; rotulo: string; dica: string }[]): number {
+  const xEsq = d.margem
+  const xDir = d.largura - d.margem
+  const altura = 22
+  let x = xEsq
+  for (const s of itens) {
+    const ln = larguraDoTexto(String(s.n), 11.5, true)
+    const largura = 10 + ln + 4 + larguraDoTexto(s.rotulo, 11.5) + 10
+    if (x > xEsq && x + largura > xDir) {
+      x = xEsq
+      y += altura + 6
+    }
+    add(
+      d,
+      `<g><title>${esc(s.dica)}</title>`,
+      `<rect x="${x}" y="${y - 15}" width="${largura}" height="${altura}" rx="${altura / 2}" class="card"/>`,
+      texto(x + 10, y, String(s.n), { tamanho: 11.5, peso: 700, classe: 'txt' }),
+      texto(x + 10 + ln + 4, y, s.rotulo, { tamanho: 11.5, classe: 'sec' }),
+      '</g>',
+    )
+    x += largura + 8
+  }
+  return y + 7
 }
 
 const totalPublicado = (p: Publicado) => p.mensagens + p.documentos + p.arquivos
@@ -983,44 +980,25 @@ function partesPublicadas(p: Publicado): Trecho[] {
 }
 
 /**
- * Publicado: o que publiquei no Basecamp na semana, por tipo. É trabalho meu
- * que não vira tarefa, então fica fora da colaboração. Sem nada, não aparece.
+ * Publicado: o que publiquei no Basecamp na semana, por tipo, numa linha
+ * discreta que fecha a análise. É trabalho meu que não vira tarefa, então fica
+ * fora da colaboração. Sem nada, não aparece.
  */
 function publicado(d: Desenho, semana: Semana) {
   const p = semana.publicado
   if (p === undefined || totalPublicado(p) === 0) return
-  const yTitulo = d.y + 18
+  const xEsq = d.margem
+  const xDir = d.largura - d.margem
+  const y = d.y + 30
   add(
     d,
+    `<line x1="${xEsq}" x2="${xDir}" y1="${y - 20}" y2="${y - 20}" class="linha" stroke-width="1"/>`,
     '<g><title>O que você publicou no Basecamp nesta semana: trabalho seu que não vira tarefa</title>',
-    texto(d.margem, yTitulo, 'Publicado', { tamanho: 14, peso: 700, classe: 'txt' }),
+    texto(xEsq, y, 'Publicado na semana', { tamanho: 12, classe: 'sec' }),
+    texto(xDir, y, partesPublicadas(p).map(t => `${t.n} ${t.rotulo}`).join(' · '), { tamanho: 12, peso: 700, classe: 'txt', ancora: 'end' }),
     '</g>',
   )
-  d.y = legenda(d, yTitulo + 26, partesPublicadas(p)) + 22
-}
-
-/**
- * Embaixo da legenda, de onde vieram as conversas da semana: por menção com @
- * ou por iniciativa. Devolve a linha de base da última linha.
- */
-function mencoes(d: Desenho, y: number, c: Colaboracao): number {
-  if (c.chamado === undefined || conversasDa(c) === 0) return y
-  return legenda(d, y + 24, [
-    {
-      n: c.chamado,
-      rotulo: 'por menção com @',
-      dica:
-        'Conversas em que alguém marcou você com @ num comentário antes da sua resposta. ' +
-        'É um mínimo: menção no corpo da tarefa e pedido por ping não entram.',
-    },
-    {
-      n: conversasDa(c) - c.chamado,
-      rotulo: 'por iniciativa',
-      dica:
-        'Conversas em que você comentou sem uma menção com @ num comentário antes. ' +
-        'Inclui as que vieram de menção no corpo da tarefa ou de ping.',
-    },
-  ])
+  d.y = y + 6
 }
 
 /** A colaboração da semana, o chat dos projetos e o que publiquei, uma linha cada, para o terminal. */

@@ -12,24 +12,24 @@ Um painel com a sua semana, de domingo a sábado: as reuniões do Google Calenda
 
 Depois dos dias vem a análise da semana:
 
-- **Tarefas por dia:** um gráfico da semana com a linha do seu ritmo. O que passa dela aparece listrado: é de onde tirar tarefa.
-- **Quem pediu:** quantas tarefas da semana cada pessoa criou no Basecamp, com as suas como "Você". As cinco maiores aparecem; o resto vira uma linha só.
+- **Tarefas por dia:** um gráfico da semana com a linha do seu ritmo. O que passa dela aparece em roxo claro: é de onde tirar tarefa. O número fica em destaque só em hoje e no dia mais cheio.
+- **Quem pediu:** quantas tarefas da semana cada pessoa criou no Basecamp, com as suas como "Você". As três maiores aparecem, cada uma com o nome em cima de uma barra fina; o resto vira uma linha só, em roxo claro.
 - **Espaços:** em que espaço do Basecamp estão as tarefas da semana, do mesmo jeito.
 
-  Os dois gráficos contam as mesmas tarefas do total do topo, e cada barra tem as mesmas cores: concluídas, atrasadas e a fazer.
+  Os dois gráficos contam as mesmas tarefas do total do topo. A divisão em concluídas, atrasadas e a fazer, que a barra do topo já mostra, aparece ao passar o mouse em cada linha.
 
 - **Colaboração:** em quantas conversas do Basecamp você comentou na semana. Cada conversa é a tarefa, o card ou a mensagem em que você comentou, contada uma vez, por mais comentários que tenha. A barra divide as conversas pelo dono do item:
   - **suas:** você é responsável, ou criou o item sem passar para ninguém (uma mensagem, um documento);
   - **que você pediu:** você criou e passou para outra pessoa, ou seja, acompanhamento;
   - **de outras pessoas:** o item é de outra pessoa, e você entrou para ajudar ou responder.
 
-  Ao lado do título fica o total e quantas estão fora das suas tarefas. É o trabalho que não aparece no total do topo, mas toma tempo. Serve de contexto, não de meta: comentar mais ou menos não é o objetivo. Para comparar com outra semana, use `/semana anterior` ou `/semana -2`: o bloco segue a semana do painel, até 4 semanas para trás.
+  Ao lado do título, em destaque, quantas estão fora das suas tarefas, e o total em cinza. Na barra e na legenda, o que está fora vem primeiro. É o trabalho que não aparece no total do topo, mas toma tempo. Serve de contexto, não de meta: comentar mais ou menos não é o objetivo. Para comparar com outra semana, use `/semana anterior` ou `/semana -2`: o bloco segue a semana do painel, até 4 semanas para trás.
 
-  Embaixo da legenda, quantas dessas conversas vieram de uma **menção com @** e quantas foram **por iniciativa**. A conta olha cada comentário seu: se alguém marcou você com @ num comentário feito depois do seu comentário anterior naquela conversa (ou antes do primeiro), você foi chamado. Basta um comentário chamado na semana para a conversa contar como menção. É um mínimo: menção no corpo da tarefa, ping e Campfire não entram, e essas conversas contam como iniciativa.
+  Embaixo da legenda, dois selos. O primeiro diz quantas dessas conversas vieram de uma **menção com @**; as outras foram por iniciativa sua. A conta olha cada comentário seu: se alguém marcou você com @ num comentário feito depois do seu comentário anterior naquela conversa (ou antes do primeiro), você foi chamado. Basta um comentário chamado na semana para a conversa contar como menção. É um mínimo: menção no corpo da tarefa, ping e Campfire não entram.
 
-  Por último, quantas **conversas no chat dos projetos** (Campfire) você teve e em quantos espaços. O chat fica fora da barra: ele não tem dono, e o Basecamp junta as mensagens de um período num bloco só. Por isso o número é de blocos de conversa, não de mensagens.
+  O segundo selo diz quantas **conversas no chat dos projetos** (Campfire) você teve; ao passar o mouse, em quantos espaços. O chat fica fora da barra: ele não tem dono, e o Basecamp junta as mensagens de um período num bloco só. Por isso o número é de blocos de conversa, não de mensagens.
 
-- **Publicado:** o que você publicou no Basecamp na semana: mensagens no quadro de mensagens (relatórios, avisos), documentos (do Basecamp, do Google ou link de outro serviço) e arquivos. É trabalho seu que não vira tarefa, por isso fica fora da colaboração. Repostar ou mover um item não conta.
+- **Publicado:** numa linha discreta que fecha a análise, o que você publicou no Basecamp na semana: mensagens no quadro de mensagens (relatórios, avisos), documentos (do Basecamp, do Google ou link de outro serviço) e arquivos. É trabalho seu que não vira tarefa, por isso fica fora da colaboração. Repostar ou mover um item não conta.
 
 O **ritmo** é a média de tarefas que você concluiu por dia útil nas últimas 4 semanas. Semana sem nenhuma concluída (férias, por exemplo) fica de fora. Na primeira vez o painel lê seu histórico do Basecamp, abre cada tarefa da semana para saber quem a criou e cada conversa em que você comentou para saber de quem ela é e quem marcou você, o que pode levar quase um minuto. Depois só busca o que é novo: uma conversa só é aberta de novo quando você comenta nela outra vez. Quem atualiza de uma versão sem o chat e o que foi publicado passa por essa primeira leitura mais uma vez.
 

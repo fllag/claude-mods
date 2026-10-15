@@ -935,7 +935,7 @@ test('quem pediu e os espaços dividem o total da semana, com "Você" nas minhas
   expect(pedidos.criadores).toEqual(['11'])
 })
 
-test('cada gráfico soma o mesmo total da barra do topo e junta o que passa de 5 linhas', () => {
+test('cada gráfico soma o mesmo total da barra do topo e junta o que passa de 4 linhas', () => {
   const tarefa = (id: number, vence: string, projeto: string, criador?: number) => ({
     id, titulo: `t${id}`, projeto, vence,
     ...(criador === undefined ? {} : { criador: { id: criador, nome: `Pessoa ${criador}` } }),
@@ -970,9 +970,12 @@ test('cada gráfico soma o mesmo total da barra do topo e junta o que passa de 5
   expect(pessoas.find(g => g.voce)?.nome).toBe('Você')
   expect(espacos.find(g => g.nome === 'Sem espaço')?.aFazer).toBe(1)
 
-  // 8 pessoas viram 4 linhas e "4 outras pessoas".
+  // 8 pessoas viram 3 linhas e "5 outras pessoas", numa barra mais clara.
   const { svg } = desenharSemana(semana, { largura: 400 })
-  expect(svg).toContain('>4 outras pessoas</text>')
+  expect(svg).toContain('>5 outras pessoas</text>')
+  expect(svg).toContain('class="suave"/>')
+  // Uma cor só, sem trilha: concluídas, atrasadas e a fazer ficam na dica.
+  expect(svg).toContain('<title>Pessoa 1: 3 tarefas · 1 concluída · 1 atrasada · 1 a fazer</title>')
   expect(svg).toContain('>Financeiro</text>')
   expect(origensEmLinhas(semana)[0]).toMatch(/^Quem pediu: Pessoa 1 3 · /)
 
@@ -1020,19 +1023,22 @@ test('a colaboração conta as conversas da semana em que comentei, pelo dono do
   const ui = await $.ui.mount({ ...PAINEL, surface: 'desktop' })
   const svg = String((await ui.find({ type: 'Svg' }))?.props.source)
   expect(svg).toContain('>Colaboração</text>')
-  expect(svg).toContain('>4 conversas, 3 fora das suas</text>')
+  // O destaque ao lado do título é o que está fora das suas tarefas.
+  expect(svg).toContain('>3 fora das suas</tspan><tspan class="sec"> de 4 conversas</tspan>')
   expect(svg).toContain('>que você pediu</text>')
   expect(svg).toContain('>de outras pessoas</text>')
   expect(svg).toContain(
-    '<title>4 conversas do Basecamp em que você comentou nesta semana · 6 comentários · 1 que não deu para abrir · ' +
-      '1 por menção com @</title>',
+    '<title>4 conversas do Basecamp em que você comentou nesta semana · 6 comentários · 1 que não deu para abrir</title>',
   )
   expect(svg).toContain('<title>2 conversas em tarefas e mensagens de outras pessoas, em 2 espaços</title>')
   // Só a semana do painel: nada de comparar com as anteriores.
   expect(svg).not.toContain('Semana passada')
-  // Embaixo da legenda, de onde vieram as 4 conversas: 1 por menção, 3 por iniciativa.
+  // Embaixo da legenda, num selo, quantas vieram de menção; "por iniciativa" é a conta que sobra.
   expect(svg).toMatch(/<title>Conversas em que alguém marcou você com @[^<]*É um mínimo[^<]*<\/title>[^]*?>1<\/text>[^]*?>por menção com @<\/text>/)
-  expect(svg).toMatch(/>3<\/text><text [^>]*>por iniciativa<\/text>/)
+  expect(svg).not.toContain('por iniciativa')
+  // Na barra e na legenda, o que está fora das suas vem primeiro.
+  expect(svg.indexOf('>de outras pessoas</text>')).toBeLessThan(svg.indexOf('>que você pediu</text>'))
+  expect(svg.indexOf('>que você pediu</text>')).toBeLessThan(svg.indexOf('>sua</text>'))
   expect(svg.indexOf('>de outras pessoas</text>')).toBeLessThan(svg.indexOf('>por menção com @</text>'))
   // A análise termina na colaboração, depois dos espaços.
   expect(svg.indexOf('>Espaços</text>')).toBeLessThan(svg.indexOf('>Colaboração</text>'))
@@ -1183,13 +1189,14 @@ test('o chat dos projetos entra na colaboração, e o que publiquei vem numa lin
 
   const ui = await $.ui.mount({ ...PAINEL, surface: 'desktop' })
   const svg = String((await ui.find({ type: 'Svg' }))?.props.source)
-  expect(svg).toContain('>conversas no chat dos projetos, em 2 espaços</text>')
-  expect(svg).toContain('>Publicado</text>')
-  expect(svg).toMatch(/>2<\/text><text [^>]*>mensagens<\/text>/)
-  expect(svg).toMatch(/>1<\/text><text [^>]*>arquivo<\/text>/)
+  expect(svg).toContain('>conversas no chat</text>')
+  expect(svg).toMatch(/<title>Blocos de conversa no chat dos projetos[^<]*em 2 espaços[^<]*<\/title>/)
+  // O que publiquei é uma linha discreta, sem bloco próprio.
+  expect(svg).toContain('>Publicado na semana</text>')
+  expect(svg).toContain('>2 mensagens · 2 documentos · 1 arquivo</text>')
   // O chat fecha a colaboração, depois das menções; o que publiquei vem por último.
-  expect(svg.indexOf('>por iniciativa</text>')).toBeLessThan(svg.indexOf('>conversas no chat dos projetos'))
-  expect(svg.indexOf('>conversas no chat dos projetos')).toBeLessThan(svg.indexOf('>Publicado</text>'))
+  expect(svg.indexOf('>por menção com @</text>')).toBeLessThan(svg.indexOf('>conversas no chat</text>'))
+  expect(svg.indexOf('>conversas no chat</text>')).toBeLessThan(svg.indexOf('>Publicado na semana</text>'))
   await ui.unmount()
 
   const terminal = await $.ui.mount({ ...PAINEL, surface: 'terminal' })
@@ -1210,7 +1217,7 @@ test('só com chat, a colaboração aparece sem a barra; o guardado sem chat ped
   const ui = await $.ui.mount({ ...PAINEL, surface: 'desktop' })
   const svg = String((await ui.find({ type: 'Svg' }))?.props.source)
   expect(svg).toContain('>Colaboração</text>')
-  expect(svg).toContain('>conversas no chat dos projetos, em 2 espaços</text>')
+  expect(svg).toContain('>conversas no chat</text>')
   expect(svg).not.toContain('>que você pediu</text>')
   await ui.unmount()
 
