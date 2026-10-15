@@ -37,6 +37,12 @@ export type Comentario = {
 /** De quem é uma conversa: quem criou o item e quem está como responsável. */
 export type Dono = { criador: number; responsaveis: number[] }
 
+/** O que se lê de uma conversa: o dono e de onde veio cada comentário meu nela. */
+export type Conversa = Dono & {
+  /** Por id de comentário meu: se alguém me marcou com @ num comentário antes dele. */
+  chamados: Record<string, boolean>
+}
+
 /** As conversas em que comentei numa semana, pelo dono do item comentado. */
 export type Colaboracao = {
   /** Em tarefas minhas, ou em itens que criei sem passar para ninguém. */
@@ -51,6 +57,12 @@ export type Colaboracao = {
   comentarios: number
   /** Em quantos espaços estão as conversas de outras pessoas. */
   espacosDeOutros: number
+  /**
+   * Das conversas com dono conhecido, em quantas fui chamado: alguém me marcou
+   * com @ num comentário antes de um comentário meu da semana. As outras foram
+   * por iniciativa. Ausente numa leitura salva por versão anterior.
+   */
+  chamado?: number
 }
 
 /** O que a linha do tempo diz, guardado entre leituras: quando cada tarefa foi concluída e o que comentei. */

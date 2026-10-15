@@ -1,7 +1,7 @@
 // Transforma o que a agenda (Google Calendar) e o Basecamp respondem na
 // Semana que o painel desenha. Só funções puras: a busca, que usa o `$`, fica
 // no register.tsx, porque o `$` não atravessa imports.
-import type { Colaboracao, Comentario, Conclusoes, Criador, Dia, Dono, Evento, Prioridade, Semana, Tarefa } from '../types'
+import type { Colaboracao, Comentario, Conclusoes, Conversa, Criador, Dia, Dono, Evento, Prioridade, Semana, Tarefa } from '../types'
 
 export const DIAS_NA_JANELA = 7
 
@@ -349,21 +349,35 @@ export function semanaDeColaboracao(hoje: string, deslocamento: number, cobertur
   return domingo >= cobertura && domingo >= corteDaLinhaDoTempo(hoje) ? domingo : null
 }
 
-/** Os comentários feitos de `domingo` a sábado. */
+/** Os comentários feitos de `domingo` a sábado, com o id de cada um. */
 const comentariosDaSemana = (comentarios: Record<string, Comentario>, domingo: string) => {
   const sabado = somarDias(domingo, DIAS_NA_JANELA - 1)
-  return Object.values(comentarios).filter(c => c.dia >= domingo && c.dia <= sabado)
+  return Object.entries(comentarios).filter(([, c]) => c.dia >= domingo && c.dia <= sabado)
 }
 
 /** As conversas em que comentei na semana que começa em `domingo`, sem repetir. */
 export function conversasDaSemana(comentarios: Record<string, Comentario>, domingo: string): number[] {
-  return [...new Set(comentariosDaSemana(comentarios, domingo).map(c => c.conversa))]
+  return [...new Set(comentariosDaSemana(comentarios, domingo).map(([, c]) => c.conversa))]
 }
 
-/** O filtro do `basecamp show <id> --jq` que traz só quem criou o item e quem é responsável. */
-export const FILTRO_DO_DONO = '.data | {criador: .creator.id, responsaveis: [.assignees[]?.id]}'
+/** Os ids dos meus comentários em cada conversa, por id da conversa. */
+export function comentariosPorConversa(comentarios: Record<string, Comentario>): Record<string, string[]> {
+  const porConversa: Record<string, string[]> = {}
+  for (const [id, c] of Object.entries(comentarios)) (porConversa[String(c.conversa)] ??= []).push(id)
+  return porConversa
+}
 
-/** O dono, da resposta de `basecamp show <id> --jq FILTRO_DO_DONO`. */
+/**
+ * O filtro do `basecamp show <id> --comments --jq` de uma conversa: quem criou
+ * o item, quem é responsável e, de cada comentário, o id, a hora, quem
+ * escreveu e se me marca com @, sem o texto. No Basecamp a menção vem no
+ * texto como `<bc-attachment sgid="...">`, com o `sgid` da pessoa marcada.
+ */
+export const filtroDaConversa = (sgid: string) =>
+  '.data | {criador: .creator.id, responsaveis: [.assignees[]?.id], comentarios: [.comments[]? | ' +
+  `{id, em: .created_at, quem: .creator.id, chama: (.content // "" | contains(${JSON.stringify(sgid)}))}]}`
+
+/** O dono, da resposta de `basecamp show <id> --jq filtroDaConversa(sgid)`. */
 export function lerDono(resposta: unknown): Dono | null {
   const d = resposta as { criador?: unknown; responsaveis?: unknown } | null
   return typeof d?.criador === 'number' && Array.isArray(d.responsaveis) && d.responsaveis.every(r => typeof r === 'number')
@@ -371,8 +385,65 @@ export function lerDono(resposta: unknown): Dono | null {
     : null
 }
 
-/** Os donos guardados, se o que veio do armazenamento tiver a forma certa. */
-export const comoDonos = (valor: unknown): Record<string, Dono> => comoGuardados(valor, lerDono)
+/** Um comentário de uma conversa, como o `filtroDaConversa` traz. */
+type ComentarioDaConversa = { id?: unknown; em?: unknown; quem?: unknown; chama?: unknown }
+
+/**
+ * Quais comentários meus vieram de uma menção. Um comentário meu foi chamado
+ * quando outra pessoa me marcou com @ num comentário feito depois do meu
+ * anterior naquela conversa (no primeiro, desde o começo dela). A menção que
+ * ainda não respondi não conta, nem a do corpo do item, que não é comentário.
+ */
+export function lerChamados(comentarios: ComentarioDaConversa[], eu: number): Record<string, boolean> {
+  const instante = (c: ComentarioDaConversa) => Date.parse(typeof c.em === 'string' ? c.em : '')
+  const emOrdem = comentarios
+    .filter(c => typeof c?.id === 'number' && !Number.isNaN(instante(c)))
+    .sort((a, b) => instante(a) - instante(b))
+  const chamados: Record<string, boolean> = {}
+  let chamou = false
+  for (const c of emOrdem) {
+    if (c.quem === eu) {
+      chamados[String(c.id)] = chamou
+      chamou = false
+    } else if (c.chama === true) chamou = true
+  }
+  return chamados
+}
+
+/**
+ * A conversa, da resposta de `basecamp show <id> --comments --jq
+ * filtroDaConversa(sgid)`: o dono e, de cada comentário meu que a linha do
+ * tempo trouxe (`meus`), se veio de uma menção. O que não voltou na resposta
+ * (apagado, ou além dos 100 comentários que o show traz) fica como não
+ * chamado, para a conversa não ser aberta de novo a cada leitura.
+ */
+export function lerConversa(resposta: unknown, eu: number, meus: string[]): Conversa | null {
+  const dono = lerDono(resposta)
+  const comentarios = (resposta as { comentarios?: unknown } | null)?.comentarios
+  if (dono === null || !Array.isArray(comentarios)) return null
+  const lidos = lerChamados(comentarios as ComentarioDaConversa[], eu)
+  return { ...dono, chamados: Object.fromEntries(meus.map(id => [id, lidos[id] === true])) }
+}
+
+/** Uma conversa guardada, se tiver a forma certa. */
+function comoConversa(valor: unknown): Conversa | null {
+  const dono = lerDono(valor)
+  const chamados = (valor as { chamados?: unknown } | null)?.chamados
+  return dono !== null && typeof chamados === 'object' && chamados !== null && Object.values(chamados).every(c => typeof c === 'boolean')
+    ? { ...dono, chamados: chamados as Record<string, boolean> }
+    : null
+}
+
+/** As conversas guardadas, se o que veio do armazenamento tiver a forma certa. */
+export const comoConversas = (valor: unknown): Record<string, Conversa> => comoGuardados(valor, comoConversa)
+
+/**
+ * Abrir a conversa: nunca lida, ou com comentário meu que ainda não se sabe se
+ * veio de uma menção. O que veio antes de um comentário não muda depois dele,
+ * então a conversa só é aberta de novo quando comento nela outra vez.
+ */
+export const precisaAbrir = (conversa: Conversa | undefined, meus: string[]) =>
+  conversa === undefined || meus.some(id => conversa.chamados[id] === undefined)
 
 /**
  * De quem é a conversa: minha, quando sou responsável ou quando criei e não
@@ -386,29 +457,41 @@ export function deQuem(dono: Dono | undefined, eu: number): 'suas' | 'pediu' | '
   return 'outros'
 }
 
-/** As conversas em que comentei na semana que começa em `domingo`, divididas pelo dono do item comentado. */
+/**
+ * As conversas em que comentei na semana que começa em `domingo`, divididas
+ * pelo dono do item comentado, e em quantas delas fui chamado com @ antes de
+ * um comentário meu da semana.
+ */
 export function lerColaboracao(
   comentarios: Record<string, Comentario>,
-  donos: Record<string, Dono>,
+  conversas: Record<string, Conversa>,
   eu: number,
   domingo: string,
 ): Colaboracao {
   const daSemana = comentariosDaSemana(comentarios, domingo)
-  const conversas = new Map(daSemana.map(c => [c.conversa, c.espaco]))
+  const espacos = new Map(daSemana.map(([, c]) => [c.conversa, c.espaco]))
   const conta = { suas: 0, pediu: 0, outros: 0, semDono: 0 }
   const espacosDeOutros = new Set<string>()
-  for (const [conversa, espaco] of conversas) {
-    const dono = deQuem(donos[String(conversa)], eu)
+  for (const [conversa, espaco] of espacos) {
+    const dono = deQuem(conversas[String(conversa)], eu)
     conta[dono]++
     if (dono === 'outros') espacosDeOutros.add(espaco)
   }
-  return { ...conta, comentarios: daSemana.length, espacosDeOutros: espacosDeOutros.size }
+  // Só uma conversa aberta sabe de menção: as que não abriram ficam de fora.
+  const chamadas = new Set(daSemana.filter(([id, c]) => conversas[String(c.conversa)]?.chamados[id] === true).map(([, c]) => c.conversa))
+  return { ...conta, comentarios: daSemana.length, espacosDeOutros: espacosDeOutros.size, chamado: chamadas.size }
 }
 
 /** Meu id de pessoa na conta, da resposta de `basecamp people show me --json`. */
 export function pessoaDoBasecamp(resposta: unknown): number | null {
   const id = (resposta as { data?: { id?: unknown } } | null)?.data?.id
   return typeof id === 'number' ? id : null
+}
+
+/** Como o Basecamp me marca numa menção com @, da resposta de `basecamp people show me --json`. */
+export function sgidDoBasecamp(resposta: unknown): string | null {
+  const sgid = (resposta as { data?: { attachable_sgid?: unknown } } | null)?.data?.attachable_sgid
+  return typeof sgid === 'string' && sgid !== '' ? sgid : null
 }
 
 /** O filtro do `basecamp show <id> --jq` que traz só quem criou o item. */
@@ -423,8 +506,8 @@ export function lerCriador(resposta: unknown): Criador | null {
 }
 
 /**
- * Quantos criadores (e quantos donos de conversa) guardar entre leituras: quem
- * criou um item não muda, mas a lista não cresce sem fim.
+ * Quantos criadores (e quantas conversas) guardar entre leituras: quem criou
+ * um item não muda, mas a lista não cresce sem fim.
  */
 export const CRIADORES_GUARDADOS = 3000
 
@@ -516,8 +599,8 @@ export function montarSemana(args: {
   criadores?: Record<string, Criador>
   /** Meu id de pessoa no Basecamp. */
   eu?: number | null
-  /** De quem é cada conversa comentada, por id; sem isso, a semana fica sem colaboração. */
-  donos?: Record<string, Dono>
+  /** De quem é cada conversa comentada e o que veio de menção, por id; sem isso, a semana fica sem colaboração. */
+  conversas?: Record<string, Conversa>
 }): Semana {
   const comCriador = (t: Tarefa): Tarefa => {
     const criador = args.criadores?.[String(t.id)]
@@ -575,9 +658,9 @@ export function montarSemana(args: {
   const comentarios = args.conclusoes?.comentarios
   const domingoDaColaboracao = semanaDeColaboracao(hoje, deslocamento, args.conclusoes?.cobertura ?? '')
   const colaboracao =
-    comentarios === undefined || domingoDaColaboracao === null || args.donos === undefined || args.eu === undefined || args.eu === null
+    comentarios === undefined || domingoDaColaboracao === null || args.conversas === undefined || args.eu === undefined || args.eu === null
       ? undefined
-      : lerColaboracao(comentarios, args.donos, args.eu, domingoDaColaboracao)
+      : lerColaboracao(comentarios, args.conversas, args.eu, domingoDaColaboracao)
 
   // Fora da semana de hoje, as atrasadas são só as da semana mostrada, e o Up
   // next, que é do bloco Hoje, fica de fora.

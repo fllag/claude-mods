@@ -1,7 +1,7 @@
 {
   "name": "semana",
   "displayName": "Semana",
-  "version": "0.11.0",
+  "version": "0.12.0",
   "description": "Painel com a sua semana: reuniões do Google Calendar e tarefas do Basecamp num lugar só, na identidade da Hospedin. Abra com /semana. Precisa de setup: Google Calendar conectado no claude.ai e CLI do Basecamp autenticada.",
   "author": {
     "name": "Hospedin"
