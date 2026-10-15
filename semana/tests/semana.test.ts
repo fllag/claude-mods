@@ -107,6 +107,31 @@ const COMENTARIOS = [
   comentario(907, 105, 'Pessoal', '2026-10-06T10:00:00'),
 ]
 
+// Conversas no chat dos projetos e o que publiquei, também da linha do tempo.
+const API = 'https://3.basecampapi.com/123/buckets/2'
+const chat = (id: number, chatId: number, espaco: string, quando: string) => ({
+  kind: 'chat_transcript_rollup',
+  created_at: quando,
+  url: `${API}/chats/${chatId}.json`,
+  id,
+  espaco,
+})
+const publicou = (kind: string, caminho: string, quando: string) => ({ kind, created_at: quando, url: `${API}/${caminho}.json` })
+const ATIVIDADES = [
+  chat(7001, 50, 'Produto', '2026-10-12T15:00:00'),
+  chat(7002, 50, 'Produto', '2026-10-13T09:30:00'),
+  chat(7003, 60, 'Liderança', '2026-10-12T18:00:00'),
+  chat(7004, 50, 'Produto', '2026-10-06T10:00:00'), // semana passada
+  publicou('message_active', 'messages/800', '2026-10-12T09:00:00'),
+  publicou('message_created', 'messages/801', '2026-10-13T08:00:00'),
+  publicou('document_created', 'documents/810', '2026-10-11T20:00:00'),
+  publicou('document_active', 'documents/810', '2026-10-12T20:00:00'), // o mesmo, publicado depois do rascunho
+  publicou('google_document_created', 'google_documents/811', '2026-10-13T07:00:00'),
+  publicou('upload_active', 'uploads/820', '2026-10-12T07:00:00'),
+  publicou('message_inserted', 'messages/830', '2026-10-12T07:30:00'), // repostar não conta
+  publicou('document_created', 'documents/840', '2026-10-05T10:00:00'), // semana passada
+]
+
 // Como o Basecamp marca cada pessoa numa menção com @.
 const SGID_DA_ANA = 'sgid-da-ana'
 const SGID_DO_BRUNO = 'sgid-do-bruno'
@@ -193,13 +218,15 @@ type Mundo = {
   guardado?: Record<string, unknown>
   /** A linha do tempo traz também os COMENTARIOS. */
   comentarios?: boolean
+  /** A linha do tempo traz também as ATIVIDADES: chat dos projetos e o que publiquei. */
+  atividades?: boolean
 }
 
 /**
  * Agenda, Basecamp e o resto do Claude Code respondendo de memória. Devolve o
  * que foi pedido: os dias lidos da agenda e os escopos do Basecamp.
  */
-function mundo(on: On, { agenda: agendaFunciona = true, basecamp = 'ok', falhasDaLinhaDoTempo = 0, guardado, comentarios = false }: Mundo = {}) {
+function mundo(on: On, { agenda: agendaFunciona = true, basecamp = 'ok', falhasDaLinhaDoTempo = 0, guardado, comentarios = false, atividades = false }: Mundo = {}) {
   const relogio = mock.clock(on, { now: AGORA })
   const pedidos = { dias: [] as string[], escopos: [] as string[], criadores: [] as string[], conversas: [] as string[], linhasDoTempo: 0, relogio }
   mock.store(on, guardado)
@@ -239,7 +266,7 @@ function mundo(on: On, { agenda: agendaFunciona = true, basecamp = 'ok', falhasD
     // A linha do tempo vem com --agent: só os dados, sem o envelope.
     const stdout =
       grupo === 'timeline'
-        ? JSON.stringify(comentarios ? [...LINHA_DO_TEMPO, ...COMENTARIOS] : LINHA_DO_TEMPO)
+        ? JSON.stringify([...LINHA_DO_TEMPO, ...(comentarios ? COMENTARIOS : []), ...(atividades ? ATIVIDADES : [])])
         : JSON.stringify({
             ok: true,
             data:
@@ -1141,4 +1168,60 @@ test('a colaboração só conta uma semana que a linha do tempo cobre, e nunca u
   })
   expect(semConversas.colaboracao?.comentarios).toBe(0)
   expect(desenharSemana(semConversas, { largura: 400 }).svg).not.toContain('>Colaboração</text>')
+})
+
+test('o chat dos projetos entra na colaboração, e o que publiquei vem numa linha à parte', async ($, on) => {
+  mundo(on, { comentarios: true, atividades: true })
+  const { text } = await $.command.run({ command: 'semana', args: '' })
+
+  // 3 blocos de conversa no chat, em 2 espaços. Publicado: 2 mensagens, 2
+  // documentos (o 810 conta uma vez) e 1 arquivo; o repost fica de fora.
+  expect(text).toBe(
+    `${RESUMO} Colaboração: 4 conversas no Basecamp, 1 por menção com @ e 3 fora das suas tarefas.` +
+      ' Chat dos projetos: 3 conversas. Publicado: 2 mensagens, 2 documentos e 1 arquivo.',
+  )
+
+  const ui = await $.ui.mount({ ...PAINEL, surface: 'desktop' })
+  const svg = String((await ui.find({ type: 'Svg' }))?.props.source)
+  expect(svg).toContain('>conversas no chat dos projetos, em 2 espaços</text>')
+  expect(svg).toContain('>Publicado</text>')
+  expect(svg).toMatch(/>2<\/text><text [^>]*>mensagens<\/text>/)
+  expect(svg).toMatch(/>1<\/text><text [^>]*>arquivo<\/text>/)
+  // O chat fecha a colaboração, depois das menções; o que publiquei vem por último.
+  expect(svg.indexOf('>por iniciativa</text>')).toBeLessThan(svg.indexOf('>conversas no chat dos projetos'))
+  expect(svg.indexOf('>conversas no chat dos projetos')).toBeLessThan(svg.indexOf('>Publicado</text>'))
+  await ui.unmount()
+
+  const terminal = await $.ui.mount({ ...PAINEL, surface: 'terminal' })
+  expect(await terminal.find({ type: 'Text', text: /^Chat dos projetos: 3 conversas em 2 espaços$/ })).toBeDefined()
+  expect(await terminal.find({ type: 'Text', text: /^Publicado: 2 mensagens · 2 documentos · 1 arquivo$/ })).toBeDefined()
+  await terminal.unmount()
+
+  // A semana passada tem a sua conta: 1 conversa no chat e 1 documento.
+  const passada = await $.command.run({ command: 'semana', args: 'anterior' })
+  expect(passada.text).toContain('Chat dos projetos: 1 conversa. Publicado: 1 documento.')
+})
+
+test('só com chat, a colaboração aparece sem a barra; o guardado sem chat pede o histórico', async ($, on) => {
+  mundo(on, { atividades: true })
+  const { text } = await $.command.run({ command: 'semana', args: '' })
+  expect(text).toBe(`${RESUMO} Chat dos projetos: 3 conversas. Publicado: 2 mensagens, 2 documentos e 1 arquivo.`)
+
+  const ui = await $.ui.mount({ ...PAINEL, surface: 'desktop' })
+  const svg = String((await ui.find({ type: 'Svg' }))?.props.source)
+  expect(svg).toContain('>Colaboração</text>')
+  expect(svg).toContain('>conversas no chat dos projetos, em 2 espaços</text>')
+  expect(svg).not.toContain('>que você pediu</text>')
+  await ui.unmount()
+
+  // Uma leitura guardada por versão sem o chat e o que publiquei lê o histórico de novo.
+  const hoje = '2026-10-13'
+  const semChat = { dias: {}, comentarios: {}, cobertura: '0000-01-01', lidoAte: '2026-10-12T10:00:00' }
+  expect(precisaDoHistorico(semChat, hoje)).toBe(true)
+  const lida = lerConclusoes(semChat, ATIVIDADES, 1500, hoje)
+  expect(precisaDoHistorico(lida, hoje)).toBe(false)
+  // Rascunho e publicação do mesmo documento: vale o primeiro dia.
+  expect(lida.publicacoes?.['810']).toEqual({ dia: '2026-10-11', tipo: 'documento' })
+  expect(lida.publicacoes?.['830']).toBeUndefined()
+  expect(lida.chats?.['7003']).toEqual({ dia: '2026-10-12', espaco: 'Liderança' })
 })

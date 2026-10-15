@@ -27,7 +27,11 @@ Depois dos dias vem a análise da semana:
 
   Embaixo da legenda, quantas dessas conversas vieram de uma **menção com @** e quantas foram **por iniciativa**. A conta olha cada comentário seu: se alguém marcou você com @ num comentário feito depois do seu comentário anterior naquela conversa (ou antes do primeiro), você foi chamado. Basta um comentário chamado na semana para a conversa contar como menção. É um mínimo: menção no corpo da tarefa, ping e Campfire não entram, e essas conversas contam como iniciativa.
 
-O **ritmo** é a média de tarefas que você concluiu por dia útil nas últimas 4 semanas. Semana sem nenhuma concluída (férias, por exemplo) fica de fora. Na primeira vez o painel lê seu histórico do Basecamp, abre cada tarefa da semana para saber quem a criou e cada conversa em que você comentou para saber de quem ela é e quem marcou você, o que pode levar quase um minuto. Depois só busca o que é novo: uma conversa só é aberta de novo quando você comenta nela outra vez. Quem atualiza de uma versão sem a contagem de menções passa por essa primeira leitura mais uma vez.
+  Por último, quantas **conversas no chat dos projetos** (Campfire) você teve e em quantos espaços. O chat fica fora da barra: ele não tem dono, e o Basecamp junta as mensagens de um período num bloco só. Por isso o número é de blocos de conversa, não de mensagens.
+
+- **Publicado:** o que você publicou no Basecamp na semana: mensagens no quadro de mensagens (relatórios, avisos), documentos (do Basecamp, do Google ou link de outro serviço) e arquivos. É trabalho seu que não vira tarefa, por isso fica fora da colaboração. Repostar ou mover um item não conta.
+
+O **ritmo** é a média de tarefas que você concluiu por dia útil nas últimas 4 semanas. Semana sem nenhuma concluída (férias, por exemplo) fica de fora. Na primeira vez o painel lê seu histórico do Basecamp, abre cada tarefa da semana para saber quem a criou e cada conversa em que você comentou para saber de quem ela é e quem marcou você, o que pode levar quase um minuto. Depois só busca o que é novo: uma conversa só é aberta de novo quando você comenta nela outra vez. Quem atualiza de uma versão sem o chat e o que foi publicado passa por essa primeira leitura mais uma vez.
 
 **Prioridade:** comece o título da tarefa no Basecamp com 🔴 para urgente ou 🟢 para importante. Ela entra na conta de urgentes e importantes do topo, de Hoje e de Amanhã, sobe nas listas e ganha uma bolinha colorida no painel. Não usa ícone? Tudo funciona igual, só sem essa conta.
 
@@ -64,7 +68,7 @@ Feche o Claude Code e abra de novo. Depois escreva `/semana`.
 
 ## Usar
 
-`/semana` abre o painel e responde com um resumo, como "Hoje: 16 tarefas, 2 atrasadas e nenhuma reunião. Semana de 11 a 17 de outubro: 75 tarefas, 3 concluídas e 36 além do ritmo. Colaboração: 23 conversas no Basecamp, 5 por menção com @ e 9 fora das suas tarefas."
+`/semana` abre o painel e responde com um resumo, como "Hoje: 16 tarefas, 2 atrasadas e nenhuma reunião. Semana de 11 a 17 de outubro: 75 tarefas, 3 concluídas e 36 além do ritmo. Colaboração: 23 conversas no Basecamp, 5 por menção com @ e 9 fora das suas tarefas. Chat dos projetos: 1 conversa. Publicado: 3 mensagens e 2 documentos."
 
 Para ver outra semana, escreva qual depois do comando:
 
@@ -99,7 +103,7 @@ Está no [README do catálogo](../README.md#atualizar).
 ## Limites conhecidos
 
 - Testado no Mac. No Windows a CLI do Basecamp pode não ser encontrada.
-- A colaboração conta só comentários. Campfire, pings e menções que você leu sem responder ficam de fora.
+- A colaboração conta comentários e conversas no chat dos projetos. Pings e menções que você leu sem responder ficam de fora: não aparecem na linha do tempo do Basecamp.
 - A menção com @ conta só a que veio num comentário da conversa. Por isso o número é um mínimo. Numa conversa com mais de 100 comentários, a conta pode deixar menções de fora.
 - O dono de cada conversa fica guardado e só é lido de novo quando você comenta nela outra vez. Se a tarefa mudar de responsável no meio tempo, a conta não acompanha.
 - Uma atualização do Claude Code pode quebrar o painel até sair uma versão nova dele. Enquanto isso, desligue com `claude plugin disable semana@hospedin-mods`.

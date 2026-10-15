@@ -34,6 +34,28 @@ export type Comentario = {
   espaco: string
 }
 
+/**
+ * Uma conversa minha no chat de um projeto (Campfire), lida da linha do tempo.
+ * O Basecamp não diz cada mensagem: junta as de um período num bloco só.
+ */
+export type ConversaDeChat = {
+  /** AAAA-MM-DD, no fuso local. */
+  dia: string
+  /** O espaço do Basecamp do chat. */
+  espaco: string
+}
+
+/** Algo que publiquei no Basecamp, lido da linha do tempo. */
+export type Publicacao = {
+  /** AAAA-MM-DD, no fuso local. */
+  dia: string
+  /** Mensagem do quadro de mensagens (relatório, aviso), documento (do Basecamp, Google ou link) ou arquivo. */
+  tipo: 'mensagem' | 'documento' | 'arquivo'
+}
+
+/** O que publiquei numa semana, por tipo. */
+export type Publicado = { mensagens: number; documentos: number; arquivos: number }
+
 /** De quem é uma conversa: quem criou o item e quem está como responsável. */
 export type Dono = { criador: number; responsaveis: number[] }
 
@@ -63,6 +85,11 @@ export type Colaboracao = {
    * por iniciativa. Ausente numa leitura salva por versão anterior.
    */
   chamado?: number
+  /**
+   * As conversas no chat dos projetos e em quantos espaços. Ausente numa
+   * leitura salva por versão anterior.
+   */
+  chat?: { conversas: number; espacos: number }
 }
 
 /** O que a linha do tempo diz, guardado entre leituras: quando cada tarefa foi concluída e o que comentei. */
@@ -71,6 +98,10 @@ export type Conclusoes = {
   dias: Record<string, string>
   /** Meus comentários, por id; ausente numa leitura salva por versão anterior. */
   comentarios?: Record<string, Comentario>
+  /** Minhas conversas no chat dos projetos, por id do evento; ausente numa leitura salva por versão anterior. */
+  chats?: Record<string, ConversaDeChat>
+  /** O que publiquei, por id do item; ausente numa leitura salva por versão anterior. */
+  publicacoes?: Record<string, Publicacao>
   /** A partir de que dia (AAAA-MM-DD) o mapa está completo. */
   cobertura: string
   /** O evento mais novo já lido, em ISO. */
@@ -132,6 +163,12 @@ export type Semana = {
    * ou numa leitura salva por versão anterior.
    */
   colaboracao?: Colaboracao
+  /**
+   * O que publiquei na semana mostrada: mensagens, documentos e arquivos.
+   * Ausente numa semana futura, numa que a linha do tempo não cobre inteira,
+   * sem a linha do tempo ou numa leitura salva por versão anterior.
+   */
+  publicado?: Publicado
 }
 
 declare module 'claude-code' {

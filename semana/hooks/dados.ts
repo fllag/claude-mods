@@ -1,7 +1,7 @@
 // Transforma o que a agenda (Google Calendar) e o Basecamp respondem na
 // Semana que o painel desenha. Só funções puras: a busca, que usa o `$`, fica
 // no register.tsx, porque o `$` não atravessa imports.
-import type { Colaboracao, Comentario, Conclusoes, Conversa, Criador, Dia, Dono, Evento, Prioridade, Semana, Tarefa } from '../types'
+import type { Colaboracao, Comentario, Conclusoes, Conversa, ConversaDeChat, Criador, Dia, Dono, Evento, Prioridade, Publicacao, Publicado, Semana, Tarefa } from '../types'
 
 export const DIAS_NA_JANELA = 7
 
@@ -258,25 +258,48 @@ const corteDaLinhaDoTempo = (hoje: string) => somarDias(inicioDoRitmo(hoje), -7)
 /** As conclusões guardadas, se o que veio do armazenamento tiver a forma certa. */
 export function comoConclusoes(valor: unknown): Conclusoes | undefined {
   const c = valor as Partial<Conclusoes> | null | undefined
-  const comentariosOk = c?.comentarios === undefined || (typeof c.comentarios === 'object' && c.comentarios !== null)
-  return typeof c?.dias === 'object' && c.dias !== null && typeof c.cobertura === 'string' && typeof c.lidoAte === 'string' && comentariosOk
+  const objetoOuNada = (v: unknown) => v === undefined || (typeof v === 'object' && v !== null)
+  const extrasOk = objetoOuNada(c?.comentarios) && objetoOuNada(c?.chats) && objetoOuNada(c?.publicacoes)
+  return typeof c?.dias === 'object' && c.dias !== null && typeof c.cobertura === 'string' && typeof c.lidoAte === 'string' && extrasOk
     ? (c as Conclusoes)
     : undefined
 }
 
 /**
  * Ler a linha do tempo desde longe: nada guardado, o guardado não cobre o
- * ritmo, ou veio de uma versão que ainda não guardava os comentários.
+ * ritmo, ou veio de uma versão que ainda não guardava os comentários, o chat
+ * e o que publiquei.
  */
 export const precisaDoHistorico = (salvas: Conclusoes | undefined, hoje: string) =>
-  salvas === undefined || salvas.comentarios === undefined || salvas.cobertura > inicioDoRitmo(hoje)
+  salvas === undefined ||
+  salvas.comentarios === undefined ||
+  salvas.chats === undefined ||
+  salvas.publicacoes === undefined ||
+  salvas.cobertura > inicioDoRitmo(hoje)
 
 /**
  * O filtro do `basecamp timeline me --agent --jq`: de cada evento, o tipo, a
- * hora e o endereço; de um comentário, também a conversa e o espaço.
+ * hora e o endereço; de um comentário, também a conversa e o espaço; de uma
+ * conversa no chat, o id do evento e o espaço.
  */
 export const FILTRO_DA_LINHA_DO_TEMPO =
-  '[.[] | {kind, created_at, url} + (if .kind == "comment_created" then {conversa: .parent_recording_id, espaco: .bucket.name} else {} end)]'
+  '[.[] | {kind, created_at, url} + (if .kind == "comment_created" then {conversa: .parent_recording_id, espaco: .bucket.name} ' +
+  'elif .kind == "chat_transcript_rollup" then {id, espaco: .bucket.name} else {} end)]'
+
+/**
+ * Os eventos da linha do tempo que contam como publicação minha, pelo tipo.
+ * Repostar e mover não contam: o item não é novo.
+ */
+const PUBLICACOES: Record<string, Publicacao['tipo']> = {
+  message_created: 'mensagem',
+  message_active: 'mensagem',
+  document_created: 'documento',
+  document_active: 'documento',
+  google_document_created: 'documento',
+  cloud_file_created: 'documento',
+  upload_created: 'arquivo',
+  upload_active: 'arquivo',
+}
 
 type EventoDaLinhaDoTempo = {
   kind?: string
@@ -285,6 +308,7 @@ type EventoDaLinhaDoTempo = {
   app_url?: string
   conversa?: unknown
   espaco?: unknown
+  id?: unknown
 }
 
 /**
@@ -298,6 +322,8 @@ export function lerConclusoes(salvas: Conclusoes | undefined, eventos: unknown[]
   const doHistorico = precisaDoHistorico(salvas, hoje)
   const dias: Record<string, string> = doHistorico ? {} : { ...salvas?.dias }
   const comentarios: Record<string, Comentario> = doHistorico ? {} : { ...salvas?.comentarios }
+  const chats: Record<string, ConversaDeChat> = doHistorico ? {} : { ...salvas?.chats }
+  const publicacoes: Record<string, Publicacao> = doHistorico ? {} : { ...salvas?.publicacoes }
   const instante = (e: EventoDaLinhaDoTempo) => Date.parse(e.created_at ?? '')
   const ordenados = (eventos as EventoDaLinhaDoTempo[])
     .filter(e => typeof e?.created_at === 'string' && !Number.isNaN(instante(e)))
@@ -310,6 +336,20 @@ export function lerConclusoes(salvas: Conclusoes | undefined, eventos: unknown[]
         const espaco = typeof e.espaco === 'string' ? e.espaco.trim() : ''
         comentarios[comentario] = { dia: dataLocal(instante(e)), conversa: e.conversa, espaco }
       }
+      continue
+    }
+    if (e.kind === 'chat_transcript_rollup') {
+      if (typeof e.id === 'number') {
+        const espaco = typeof e.espaco === 'string' ? e.espaco.trim() : ''
+        chats[String(e.id)] = { dia: dataLocal(instante(e)), espaco }
+      }
+      continue
+    }
+    const tipo = PUBLICACOES[e.kind ?? '']
+    if (tipo !== undefined) {
+      const item = (e.url ?? '').match(/\/(?:messages|documents|google_documents|cloud_files|uploads)\/(\d+)/)?.[1]
+      // Criado e publicado depois (rascunho): vale o primeiro dia.
+      if (item !== undefined) publicacoes[item] ??= { dia: dataLocal(instante(e)), tipo }
       continue
     }
     const id = (e.url ?? e.app_url ?? '').match(/\/todos\/(\d+)/)?.[1]
@@ -333,6 +373,8 @@ export function lerConclusoes(salvas: Conclusoes | undefined, eventos: unknown[]
   return {
     dias: Object.fromEntries(Object.entries(dias).filter(([, dia]) => dia >= corte)),
     comentarios: Object.fromEntries(Object.entries(comentarios).filter(([, c]) => c.dia >= corte)),
+    chats: Object.fromEntries(Object.entries(chats).filter(([, c]) => c.dia >= corte)),
+    publicacoes: Object.fromEntries(Object.entries(publicacoes).filter(([, p]) => p.dia >= corte)),
     cobertura,
     lidoAte: maisNovo,
   }
@@ -350,14 +392,27 @@ export function semanaDeColaboracao(hoje: string, deslocamento: number, cobertur
 }
 
 /** Os comentários feitos de `domingo` a sábado, com o id de cada um. */
-const comentariosDaSemana = (comentarios: Record<string, Comentario>, domingo: string) => {
+const naSemana = <T extends { dia: string }>(itens: Record<string, T>, domingo: string) => {
   const sabado = somarDias(domingo, DIAS_NA_JANELA - 1)
-  return Object.entries(comentarios).filter(([, c]) => c.dia >= domingo && c.dia <= sabado)
+  return Object.entries(itens).filter(([, c]) => c.dia >= domingo && c.dia <= sabado)
+}
+
+/** Minhas conversas no chat dos projetos na semana que começa em `domingo`, e em quantos espaços. */
+export function chatDaSemana(chats: Record<string, ConversaDeChat>, domingo: string): { conversas: number; espacos: number } {
+  const daSemana = naSemana(chats, domingo)
+  return { conversas: daSemana.length, espacos: new Set(daSemana.map(([, c]) => c.espaco)).size }
+}
+
+/** O que publiquei na semana que começa em `domingo`, por tipo. */
+export function publicadoNaSemana(publicacoes: Record<string, Publicacao>, domingo: string): Publicado {
+  const tipos = naSemana(publicacoes, domingo).map(([, p]) => p.tipo)
+  const contar = (tipo: Publicacao['tipo']) => tipos.filter(t => t === tipo).length
+  return { mensagens: contar('mensagem'), documentos: contar('documento'), arquivos: contar('arquivo') }
 }
 
 /** As conversas em que comentei na semana que começa em `domingo`, sem repetir. */
 export function conversasDaSemana(comentarios: Record<string, Comentario>, domingo: string): number[] {
-  return [...new Set(comentariosDaSemana(comentarios, domingo).map(([, c]) => c.conversa))]
+  return [...new Set(naSemana(comentarios, domingo).map(([, c]) => c.conversa))]
 }
 
 /** Os ids dos meus comentários em cada conversa, por id da conversa. */
@@ -468,7 +523,7 @@ export function lerColaboracao(
   eu: number,
   domingo: string,
 ): Colaboracao {
-  const daSemana = comentariosDaSemana(comentarios, domingo)
+  const daSemana = naSemana(comentarios, domingo)
   const espacos = new Map(daSemana.map(([, c]) => [c.conversa, c.espaco]))
   const conta = { suas: 0, pediu: 0, outros: 0, semDono: 0 }
   const espacosDeOutros = new Set<string>()
@@ -657,10 +712,18 @@ export function montarSemana(args: {
   // A colaboração precisa saber quem sou e de quem é cada conversa.
   const comentarios = args.conclusoes?.comentarios
   const domingoDaColaboracao = semanaDeColaboracao(hoje, deslocamento, args.conclusoes?.cobertura ?? '')
+  const chats = args.conclusoes?.chats
   const colaboracao =
     comentarios === undefined || domingoDaColaboracao === null || args.conversas === undefined || args.eu === undefined || args.eu === null
       ? undefined
-      : lerColaboracao(comentarios, args.conversas, args.eu, domingoDaColaboracao)
+      : {
+          ...lerColaboracao(comentarios, args.conversas, args.eu, domingoDaColaboracao),
+          ...(chats === undefined ? {} : { chat: chatDaSemana(chats, domingoDaColaboracao) }),
+        }
+  // O que publiquei só precisa da linha do tempo.
+  const publicacoes = args.conclusoes?.publicacoes
+  const publicado =
+    publicacoes === undefined || domingoDaColaboracao === null ? undefined : publicadoNaSemana(publicacoes, domingoDaColaboracao)
 
   // Fora da semana de hoje, as atrasadas são só as da semana mostrada, e o Up
   // next, que é do bloco Hoje, fica de fora.
@@ -680,5 +743,6 @@ export function montarSemana(args: {
     nome: args.nome ?? null,
     eu: args.eu ?? null,
     ...(colaboracao === undefined ? {} : { colaboracao }),
+    ...(publicado === undefined ? {} : { publicado }),
   }
 }

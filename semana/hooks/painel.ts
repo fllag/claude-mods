@@ -1,6 +1,6 @@
 // Desenha a Semana como um SVG na identidade da Hospedin. Função pura: não
 // conhece o Claude Code, então roda igual no mod, nos testes e na prévia.
-import type { Colaboracao, Dia, Prioridade, Semana, Tarefa } from '../types'
+import type { Colaboracao, Dia, Prioridade, Publicado, Semana, Tarefa } from '../types'
 import { importancia, semMarcaDePrioridade, tarefasDoTotal } from './dados'
 
 const COR = {
@@ -879,21 +879,26 @@ export function origensEmLinhas(semana: Semana): string[] {
 const conversasDa = (c: Colaboracao) => c.suas + c.pediu + c.outros
 const foraDasSuas = (c: Colaboracao) => c.pediu + c.outros
 
+/** Quantas conversas no chat dos projetos; 0 numa leitura salva por versão anterior. */
+const conversasNoChat = (c: Colaboracao) => c.chat?.conversas ?? 0
+
 /**
  * Colaboração: as conversas do Basecamp em que comentei na semana mostrada,
  * numa barra dividida pelo dono do item: minhas, que eu pedi a alguém e de
  * outras pessoas. Ao lado do título, o total e quantas ficaram fora das minhas
- * tarefas. Sem nenhuma conversa, não aparece. Para ver outra semana, o
- * /semana anterior ou -N: o bloco segue a semana do painel.
+ * tarefas; embaixo, de onde vieram e quantas conversas tive no chat dos
+ * projetos. Sem nenhuma conversa, nem no chat, não aparece. Para ver outra
+ * semana, o /semana anterior ou -N: o bloco segue a semana do painel.
  */
 function colaboracao(d: Desenho, semana: Semana) {
   const c = semana.colaboracao
-  if (c === undefined || conversasDa(c) === 0) return
+  if (c === undefined || conversasDa(c) + conversasNoChat(c) === 0) return
   const xEsq = d.margem
   const xDir = d.largura - d.margem
   const yTitulo = d.y + 18
   const fora = foraDasSuas(c)
-  const nota = `${plural(conversasDa(c), 'conversa', 'conversas')}, ${fora === 0 ? 'todas suas' : `${fora} fora das suas`}`
+  const nota =
+    conversasDa(c) === 0 ? '' : `${plural(conversasDa(c), 'conversa', 'conversas')}, ${fora === 0 ? 'todas suas' : `${fora} fora das suas`}`
   const dica = [
     `${plural(conversasDa(c), 'conversa', 'conversas')} do Basecamp em que você comentou nesta semana`,
     plural(c.comentarios, 'comentário', 'comentários'),
@@ -930,10 +935,68 @@ function colaboracao(d: Desenho, semana: Semana) {
         (c.outros > 0 ? `, em ${plural(c.espacosDeOutros, 'espaço', 'espaços')}` : ''),
     },
   ]
-  const yBarra = yTitulo + 14
-  barraEmpilhada(d, 'colaboracao', yBarra, trechos)
-  const y = legenda(d, yBarra + ALTURA_DA_BARRA + 20, trechos)
-  d.y = mencoes(d, y, c) + 22
+  let y = yTitulo
+  if (conversasDa(c) > 0) {
+    const yBarra = yTitulo + 14
+    barraEmpilhada(d, 'colaboracao', yBarra, trechos)
+    y = mencoes(d, legenda(d, yBarra + ALTURA_DA_BARRA + 20, trechos), c)
+  }
+  d.y = chatDosProjetos(d, y, c) + 22
+}
+
+/**
+ * Por último, as conversas no chat dos projetos (Campfire). Ficam fora da
+ * barra: um chat não tem dono, e o Basecamp junta as mensagens de um período
+ * num bloco só. Devolve a linha de base da última linha.
+ */
+function chatDosProjetos(d: Desenho, y: number, c: Colaboracao): number {
+  const chat = c.chat
+  if (chat === undefined || chat.conversas === 0) return y
+  return legenda(d, y + 24, [
+    {
+      n: chat.conversas,
+      rotulo: `${chat.conversas === 1 ? 'conversa' : 'conversas'} no chat dos projetos, em ${plural(chat.espacos, 'espaço', 'espaços')}`,
+      dica:
+        'Blocos de conversa no chat dos projetos em que você falou nesta semana. O Basecamp junta as ' +
+        'mensagens de um período num bloco só, então o número não é de mensagens. Pings não entram.',
+    },
+  ])
+}
+
+const totalPublicado = (p: Publicado) => p.mensagens + p.documentos + p.arquivos
+
+/** As partes do que publiquei, sem as zeradas, para a legenda e o texto. */
+function partesPublicadas(p: Publicado): Trecho[] {
+  return [
+    {
+      n: p.mensagens,
+      rotulo: p.mensagens === 1 ? 'mensagem' : 'mensagens',
+      dica: 'Mensagens que você publicou no quadro de mensagens: relatórios, avisos e outras',
+    },
+    {
+      n: p.documentos,
+      rotulo: p.documentos === 1 ? 'documento' : 'documentos',
+      dica: 'Documentos novos: do Basecamp, do Google ou link de outro serviço',
+    },
+    { n: p.arquivos, rotulo: p.arquivos === 1 ? 'arquivo' : 'arquivos', dica: 'Arquivos que você subiu no Basecamp' },
+  ].filter(t => t.n > 0)
+}
+
+/**
+ * Publicado: o que publiquei no Basecamp na semana, por tipo. É trabalho meu
+ * que não vira tarefa, então fica fora da colaboração. Sem nada, não aparece.
+ */
+function publicado(d: Desenho, semana: Semana) {
+  const p = semana.publicado
+  if (p === undefined || totalPublicado(p) === 0) return
+  const yTitulo = d.y + 18
+  add(
+    d,
+    '<g><title>O que você publicou no Basecamp nesta semana: trabalho seu que não vira tarefa</title>',
+    texto(d.margem, yTitulo, 'Publicado', { tamanho: 14, peso: 700, classe: 'txt' }),
+    '</g>',
+  )
+  d.y = legenda(d, yTitulo + 26, partesPublicadas(p)) + 22
 }
 
 /**
@@ -960,13 +1023,23 @@ function mencoes(d: Desenho, y: number, c: Colaboracao): number {
   ])
 }
 
-/** A colaboração da semana numa linha, para o terminal. */
+/** A colaboração da semana, o chat dos projetos e o que publiquei, uma linha cada, para o terminal. */
 export function colaboracaoEmLinhas(semana: Semana): string[] {
   const c = semana.colaboracao
-  if (c === undefined || conversasDa(c) === 0) return []
+  const p = semana.publicado
   return [
-    `Colaboração: ${plural(conversasDa(c), 'conversa', 'conversas')} · ${plural(c.suas, 'sua', 'suas')} · ${c.pediu} que você pediu · ${c.outros} de outras pessoas` +
-      (c.chamado === undefined ? '' : ` · ${c.chamado} por menção com @`),
+    ...(c === undefined || conversasDa(c) === 0
+      ? []
+      : [
+          `Colaboração: ${plural(conversasDa(c), 'conversa', 'conversas')} · ${plural(c.suas, 'sua', 'suas')} · ${c.pediu} que você pediu · ${c.outros} de outras pessoas` +
+            (c.chamado === undefined ? '' : ` · ${c.chamado} por menção com @`),
+        ]),
+    ...(c?.chat === undefined || c.chat.conversas === 0
+      ? []
+      : [`Chat dos projetos: ${plural(c.chat.conversas, 'conversa', 'conversas')} em ${plural(c.chat.espacos, 'espaço', 'espaços')}`]),
+    ...(p === undefined || totalPublicado(p) === 0
+      ? []
+      : [`Publicado: ${partesPublicadas(p).map(t => `${t.n} ${t.rotulo}`).join(' · ')}`]),
   ]
 }
 
@@ -982,6 +1055,19 @@ function colaboracaoEmTexto(semana: Semana): string {
   const mencao = c.chamado ? `${c.chamado} por menção com @ e ` : ''
   const onde = fora === 0 ? 'todas nas suas tarefas' : `${fora} fora das suas tarefas`
   return ` Colaboração: ${plural(conversasDa(c), 'conversa', 'conversas')} no Basecamp, ${mencao}${onde}.`
+}
+
+/**
+ * " Chat dos projetos: 4 conversas. Publicado: 2 mensagens e 3 documentos.",
+ * para o fim do resumo, depois da colaboração; vazio sem nada.
+ */
+function chatEPublicadoEmTexto(semana: Semana): string {
+  const chat = semana.colaboracao?.chat?.conversas ?? 0
+  const p = semana.publicado
+  return (
+    (chat === 0 ? '' : ` Chat dos projetos: ${plural(chat, 'conversa', 'conversas')}.`) +
+    (p === undefined || totalPublicado(p) === 0 ? '' : ` Publicado: ${juntar(partesPublicadas(p).map(t => `${t.n} ${t.rotulo}`))}.`)
+  )
 }
 
 type Linha = {
@@ -1357,7 +1443,7 @@ type OpcoesDoPainel = { largura?: number; titulo?: string }
 /**
  * O SVG do painel e suas medidas, para a largura pedida em pixels. A ordem
  * segue o uso: primeiro o que fazer, hoje e nos próximos dias, e por último a
- * análise da semana (tarefas por dia, quem pediu, espaços e colaboração), para os gráficos
+ * análise da semana (tarefas por dia, quem pediu, espaços, colaboração e o que publiquei), para os gráficos
  * não separarem hoje de amanhã. Em outra semana não há o card de hoje, e todos
  * os dias ganham seu bloco.
  */
@@ -1379,6 +1465,7 @@ export function desenharSemana(semana: Semana, opcoes: OpcoesDoPainel = {}): { s
   grafico(d, semana)
   origens(d, semana)
   colaboracao(d, semana)
+  publicado(d, semana)
   rodape(d, semana)
 
   const altura = Math.ceil(d.y)
@@ -1451,7 +1538,7 @@ export function resumoEmTexto(semana: Semana): string {
           plural(c.feitas, 'concluída', 'concluídas'),
           ...(c.alem > 0 ? [`${c.alem} além do ritmo`] : []),
         ]
-  return `Hoje: ${juntar(deHoje)}. Semana de ${periodoDe(semana)}: ${juntar(daSemana)}.${colaboracaoEmTexto(semana)}`
+  return `Hoje: ${juntar(deHoje)}. Semana de ${periodoDe(semana)}: ${juntar(daSemana)}.${colaboracaoEmTexto(semana)}${chatEPublicadoEmTexto(semana)}`
 }
 
 /** Numa semana passada, o que foi concluído e o que ficou; numa futura, o que passa do ritmo. */
@@ -1466,5 +1553,5 @@ function resumoDeOutraSemana(semana: Semana, nome: string): string {
     ...(c.alem > 0 ? [`${c.alem} além do ritmo`] : []),
     reunioes === 0 ? 'nenhuma reunião' : plural(reunioes, 'reunião', 'reuniões'),
   ]
-  return `${nome.charAt(0).toUpperCase()}${nome.slice(1)}, de ${periodoDe(semana)}: ${juntar(partes)}.${colaboracaoEmTexto(semana)}`
+  return `${nome.charAt(0).toUpperCase()}${nome.slice(1)}, de ${periodoDe(semana)}: ${juntar(partes)}.${colaboracaoEmTexto(semana)}${chatEPublicadoEmTexto(semana)}`
 }
