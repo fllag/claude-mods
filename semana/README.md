@@ -23,7 +23,7 @@ Depois dos dias vem a análise da semana:
   - **que você pediu:** você criou e passou para outra pessoa, ou seja, acompanhamento;
   - **de outras pessoas:** o item é de outra pessoa, e você entrou para ajudar ou responder.
 
-  Ao lado do título, em destaque, quantas estão fora das suas tarefas, e o total em cinza. Na barra e na legenda, o que está fora vem primeiro. É o trabalho que não aparece no total do topo, mas toma tempo. Serve de contexto, não de meta: comentar mais ou menos não é o objetivo. Para comparar com outra semana, use `/semana anterior` ou `/semana -2`: o bloco segue a semana do painel, até 4 semanas para trás.
+  Ao lado do título fica o total de conversas; a legenda mostra quantas são suas, quantas você pediu e quantas são de outras pessoas. As duas últimas são o trabalho que não aparece no total do topo, mas toma tempo. Serve de contexto, não de meta: comentar mais ou menos não é o objetivo. Para comparar com outra semana, use `/semana anterior` ou `/semana -2`: o bloco segue a semana do painel, até 4 semanas para trás.
 
   Embaixo da legenda, dois selos. O primeiro diz quantas dessas conversas vieram de uma **menção com @**; as outras foram por iniciativa sua. A conta olha cada comentário seu: se alguém marcou você com @ num comentário feito depois do seu comentário anterior naquela conversa (ou antes do primeiro), você foi chamado. Basta um comentário chamado na semana para a conversa contar como menção. É um mínimo: menção no corpo da tarefa, ping e Campfire não entram.
 

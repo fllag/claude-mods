@@ -848,9 +848,9 @@ const conversasNoChat = (c: Colaboracao) => c.chat?.conversas ?? 0
 
 /**
  * Colaboração: as conversas do Basecamp em que comentei na semana mostrada,
- * numa barra dividida pelo dono do item. O que está fora das minhas tarefas
- * vem primeiro (de outras pessoas, depois o que eu pedi) e é o destaque ao
- * lado do título. Embaixo, em selos, quantas vieram de menção com @ e quantas
+ * com o total ao lado do título e uma barra dividida pelo dono do item:
+ * minhas, que eu pedi a alguém e de outras pessoas, nessa ordem, com os
+ * números na legenda. Embaixo, em selos, quantas vieram de menção com @ e quantas
  * conversas tive no chat dos projetos, que fica fora da barra porque um chat
  * não tem dono. Sem nenhuma conversa, nem no chat, não aparece. Para ver
  * outra semana, o /semana anterior ou -N: o bloco segue a semana do painel.
@@ -861,12 +861,8 @@ function colaboracao(d: Desenho, semana: Semana) {
   const xEsq = d.margem
   const xDir = d.largura - d.margem
   const yTitulo = d.y + 18
-  const fora = foraDasSuas(c)
-  const destaque = conversasDa(c) === 0 ? '' : fora === 0 ? 'todas suas' : `${fora} fora das suas`
-  // O total sai do lado do título quando não cabe; continua na dica.
-  const espaco = xDir - xEsq - larguraDoTexto('Colaboração', 14, true) - 12
-  const total = conversasDa(c) === 0 ? '' : ` de ${plural(conversasDa(c), 'conversa', 'conversas')}`
-  const resto = larguraDoTexto(destaque, 12, true) + larguraDoTexto(total, 12) <= espaco ? total : ''
+  // Ao lado do título, só o total: a legenda já diz quantas são suas e quantas são de fora.
+  const nota = conversasDa(c) === 0 ? '' : plural(conversasDa(c), 'conversa', 'conversas')
   const dica = [
     `${plural(conversasDa(c), 'conversa', 'conversas')} do Basecamp em que você comentou nesta semana`,
     plural(c.comentarios, 'comentário', 'comentários'),
@@ -876,8 +872,7 @@ function colaboracao(d: Desenho, semana: Semana) {
     d,
     `<g><title>${esc(dica)}</title>`,
     texto(xEsq, yTitulo, 'Colaboração', { tamanho: 14, peso: 700, classe: 'txt' }),
-    `<text x="${xDir}" y="${yTitulo}" font-size="12" text-anchor="end"><tspan font-weight="700" class="txt">${esc(destaque)}</tspan>` +
-      `<tspan class="sec">${esc(resto)}</tspan></text>`,
+    nota === '' ? '' : texto(xDir, yTitulo, nota, { tamanho: 11.5, classe: 'sec', ancora: 'end' }),
     '</g>',
   )
 
@@ -885,12 +880,10 @@ function colaboracao(d: Desenho, semana: Semana) {
   if (conversasDa(c) > 0) {
     const trechos: Trecho[] = [
       {
-        n: c.outros,
-        classe: 'de-outros',
-        rotulo: 'de outras pessoas',
-        dica:
-          `${plural(c.outros, 'conversa', 'conversas')} em tarefas e mensagens de outras pessoas` +
-          (c.outros > 0 ? `, em ${plural(c.espacosDeOutros, 'espaço', 'espaços')}` : ''),
+        n: c.suas,
+        classe: 'coluna',
+        rotulo: c.suas === 1 ? 'sua' : 'suas',
+        dica: `${plural(c.suas, 'conversa', 'conversas')} em tarefas suas, ou em itens que você criou sem passar para ninguém`,
       },
       {
         n: c.pediu,
@@ -899,10 +892,12 @@ function colaboracao(d: Desenho, semana: Semana) {
         dica: `${plural(c.pediu, 'conversa', 'conversas')} em tarefas que você criou e passou para outra pessoa`,
       },
       {
-        n: c.suas,
-        classe: 'coluna',
-        rotulo: c.suas === 1 ? 'sua' : 'suas',
-        dica: `${plural(c.suas, 'conversa', 'conversas')} em tarefas suas, ou em itens que você criou sem passar para ninguém`,
+        n: c.outros,
+        classe: 'de-outros',
+        rotulo: 'de outras pessoas',
+        dica:
+          `${plural(c.outros, 'conversa', 'conversas')} em tarefas e mensagens de outras pessoas` +
+          (c.outros > 0 ? `, em ${plural(c.espacosDeOutros, 'espaço', 'espaços')}` : ''),
       },
     ]
     const yBarra = yTitulo + 16

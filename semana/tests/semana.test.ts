@@ -1023,8 +1023,9 @@ test('a colaboração conta as conversas da semana em que comentei, pelo dono do
   const ui = await $.ui.mount({ ...PAINEL, surface: 'desktop' })
   const svg = String((await ui.find({ type: 'Svg' }))?.props.source)
   expect(svg).toContain('>Colaboração</text>')
-  // O destaque ao lado do título é o que está fora das suas tarefas.
-  expect(svg).toContain('>3 fora das suas</tspan><tspan class="sec"> de 4 conversas</tspan>')
+  // Ao lado do título, só o total: a legenda já diz quantas são suas e quantas são de fora.
+  expect(svg).toMatch(/text-anchor="end">4 conversas<\/text>/)
+  expect(svg).not.toContain('fora das suas')
   expect(svg).toContain('>que você pediu</text>')
   expect(svg).toContain('>de outras pessoas</text>')
   expect(svg).toContain(
@@ -1036,9 +1037,9 @@ test('a colaboração conta as conversas da semana em que comentei, pelo dono do
   // Embaixo da legenda, num selo, quantas vieram de menção; "por iniciativa" é a conta que sobra.
   expect(svg).toMatch(/<title>Conversas em que alguém marcou você com @[^<]*É um mínimo[^<]*<\/title>[^]*?>1<\/text>[^]*?>por menção com @<\/text>/)
   expect(svg).not.toContain('por iniciativa')
-  // Na barra e na legenda, o que está fora das suas vem primeiro.
-  expect(svg.indexOf('>de outras pessoas</text>')).toBeLessThan(svg.indexOf('>que você pediu</text>'))
-  expect(svg.indexOf('>que você pediu</text>')).toBeLessThan(svg.indexOf('>sua</text>'))
+  // Na barra e na legenda: suas, que você pediu e de outras pessoas, nessa ordem.
+  expect(svg.indexOf('>sua</text>')).toBeLessThan(svg.indexOf('>que você pediu</text>'))
+  expect(svg.indexOf('>que você pediu</text>')).toBeLessThan(svg.indexOf('>de outras pessoas</text>'))
   expect(svg.indexOf('>de outras pessoas</text>')).toBeLessThan(svg.indexOf('>por menção com @</text>'))
   // A análise termina na colaboração, depois dos espaços.
   expect(svg.indexOf('>Espaços</text>')).toBeLessThan(svg.indexOf('>Colaboração</text>'))
@@ -1233,7 +1234,7 @@ test('só com chat, a colaboração aparece sem a barra; o guardado sem chat ped
   expect(lida.chats?.['7003']).toEqual({ dia: '2026-10-12', espaco: 'Liderança' })
 })
 
-test('a linha do que publiquei e o título da colaboração cabem em qualquer largura', () => {
+test('a linha do que publiquei cabe em qualquer largura, e a colaboração mostra o total', () => {
   // 54 conversas: 15 minhas, 14 que pedi e 25 de outras pessoas; e 15 publicações.
   const comentarios = Object.fromEntries(
     Array.from({ length: 54 }, (_, i) => [String(1000 + i), { dia: '2026-10-12', conversa: 2000 + i, espaco: 'X' }]),
@@ -1266,17 +1267,17 @@ test('a linha do que publiquei e o título da colaboração cabem em qualquer la
   const valor = '>13 mensagens · 1 documento · 1 arquivo</text>'
   const svg = (largura: number) => desenharSemana(semana, { largura }).svg
 
-  // Largo: rótulo inteiro e o valor à direita, na mesma linha; o total ao lado do destaque.
+  // Largo: rótulo inteiro e o valor à direita, na mesma linha; o total ao lado do título.
   expect(svg(560)).toContain('>Publicado na semana</text>')
   expect(svg(560)).toMatch(new RegExp(`text-anchor="end"${valor}`))
-  expect(svg(560)).toContain('>39 fora das suas</tspan><tspan class="sec"> de 54 conversas</tspan>')
+  expect(svg(560)).toMatch(/text-anchor="end">54 conversas<\/text>/)
   // Médio: o rótulo encurta para o valor caber na mesma linha.
   expect(svg(360)).toContain('>Publicado</text>')
   expect(svg(360)).toMatch(new RegExp(`text-anchor="end"${valor}`))
-  // Estreito: o valor desce para a linha de baixo, e o total sai do lado do título (fica na dica).
+  // Estreito: o valor desce para a linha de baixo; o total continua ao lado do título.
   expect(svg(300)).toContain('>Publicado na semana</text>')
   expect(svg(300)).not.toMatch(new RegExp(`text-anchor="end"${valor}`))
   expect(svg(300)).toContain(valor)
-  expect(svg(300)).toContain('>39 fora das suas</tspan><tspan class="sec"></tspan>')
+  expect(svg(300)).toMatch(/text-anchor="end">54 conversas<\/text>/)
   expect(svg(300)).toContain('<title>54 conversas do Basecamp em que você comentou nesta semana')
 })
