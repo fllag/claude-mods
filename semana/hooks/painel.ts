@@ -1,6 +1,6 @@
 // Desenha a Semana como um SVG na identidade da Hospedin. Função pura: não
 // conhece o Claude Code, então roda igual no mod, nos testes e na prévia.
-import type { Dia, Prioridade, Semana, Tarefa } from '../types'
+import type { Colaboracao, Dia, Prioridade, Semana, Tarefa } from '../types'
 import { importancia, semMarcaDePrioridade, tarefasDoTotal } from './dados'
 
 const COR = {
@@ -8,6 +8,8 @@ const COR = {
   amarelo: '#FBDE64',
   coral: '#F06672',
   verde: '#32BBAA',
+  ciano: '#45C3D5',
+  magenta: '#C1529B',
   texto: '#29415E',
   textoSec: '#536580',
   card: '#EAEFF6',
@@ -49,6 +51,8 @@ const ESTILO = `
   .coluna { fill: ${COR.roxo}; }
   .feita { fill: ${COR.verde}; }
   .atrasada { fill: ${COR.coral}; }
+  .pediu { fill: ${COR.ciano}; }
+  .de-outros { fill: ${COR.magenta}; }
   .media { stroke: ${COR.textoSec}; }
   .pilula { fill: ${COR.roxo}; }
   .pilula-vazada { fill: none; stroke: ${COR.textoSec}; }
@@ -386,13 +390,84 @@ function prioritarias(d: Desenho, x: number, y: number, p: Prioritarias, dica: s
   if (partes.length > 0) add(d, `<g><title>${esc(dica)}</title>`, ...partes, '</g>')
 }
 
-type Trecho = { n: number; classe: 'feita' | 'atrasada' | 'coluna' | 'excesso'; rotulo: string; dica: string }
+type Trecho = {
+  n: number
+  classe: 'feita' | 'atrasada' | 'coluna' | 'excesso' | 'pediu' | 'de-outros'
+  rotulo: string
+  dica: string
+}
 
 /** O quadradinho da legenda; o do excesso leva as listras por cima do roxo. */
 const amostra = (x: number, y: number, classe: string) =>
   classe === 'excesso'
     ? `<rect x="${x}" y="${y}" width="9" height="9" rx="2" class="coluna"/><rect x="${x}" y="${y}" width="9" height="9" rx="2" fill="url(#excesso)"/>`
     : `<rect x="${x}" y="${y}" width="9" height="9" rx="2" class="${classe}"/>`
+
+const ALTURA_DA_BARRA = 10
+
+/**
+ * Uma barra na largura toda que divide o total em trechos: cada um
+ * proporcional, com um mínimo para um trecho pequeno não sumir (o que o mínimo
+ * acrescenta sai do maior) e um fio entre eles, o mesmo das colunas do
+ * gráfico. Sem nada, fica só a trilha.
+ */
+function barraEmpilhada(d: Desenho, id: string, y: number, trechos: Trecho[]) {
+  const xEsq = d.margem
+  const util = d.largura - d.margem * 2
+  const h = ALTURA_DA_BARRA
+  const vao = 1
+  const total = trechos.reduce((n, t) => n + t.n, 0)
+  const visiveis = trechos.filter(t => t.n > 0)
+  const livre = util - vao * Math.max(0, visiveis.length - 1)
+  const larguras = visiveis.map(t => Math.max(4, (t.n / total) * livre))
+  const maior = larguras.indexOf(Math.max(...larguras))
+  if (maior >= 0) larguras[maior] = (larguras[maior] ?? 0) - (larguras.reduce((a, b) => a + b, 0) - livre)
+
+  add(d, `<clipPath id="${id}"><rect x="${xEsq}" y="${y}" width="${util}" height="${h}" rx="${h / 2}"/></clipPath>`)
+  if (visiveis.length === 0) add(d, `<rect x="${xEsq}" y="${y}" width="${util}" height="${h}" rx="${h / 2}" class="trilha"/>`)
+  add(d, `<g clip-path="url(#${id})">`)
+  let x = xEsq
+  for (const [i, t] of visiveis.entries()) {
+    const w = larguras[i] ?? 0
+    add(
+      d,
+      `<g><title>${esc(t.dica)}</title>`,
+      `<rect x="${x}" y="${y}" width="${w}" height="${h}" class="${t.classe === 'excesso' ? 'coluna' : t.classe}"/>`,
+      t.classe === 'excesso' ? `<rect x="${x}" y="${y}" width="${w}" height="${h}" fill="url(#excesso)"/>` : '',
+      '</g>',
+    )
+    x += w + vao
+  }
+  add(d, '</g>')
+}
+
+/**
+ * A legenda, com os números em cor de texto: a cor fica só no quadradinho.
+ * Quebra a linha quando o próximo item não cabe e devolve a linha de base da última.
+ */
+function legenda(d: Desenho, y: number, itens: Trecho[]): number {
+  const xEsq = d.margem
+  const xDir = d.largura - d.margem
+  let xl = xEsq
+  for (const t of itens) {
+    const larguraDoNumero = larguraDoTexto(String(t.n), 12, true)
+    const largura = 14 + larguraDoNumero + 3 + larguraDoTexto(t.rotulo, 12)
+    if (xl > xEsq && xl + largura > xDir) {
+      xl = xEsq
+      y += 18
+    }
+    add(
+      d,
+      `<g><title>${esc(t.dica)}</title>`,
+      amostra(xl, y - 8.5, t.classe),
+      texto(xl + 14, y, String(t.n), { tamanho: 12, peso: 700, classe: 'txt' }),
+      texto(xl + 14 + larguraDoNumero + 3, y, t.rotulo, { tamanho: 12, classe: 'sec' }),
+      '</g>',
+    )
+    xl += largura + 14
+  }
+  return y
+}
 
 /**
  * O topo: o total da semana e as horas em reunião; embaixo, uma barra que
@@ -406,7 +481,6 @@ function numeros(d: Desenho, semana: Semana) {
   const minutosEmReuniao = reunioes.reduce((n, e) => n + (e.fim - e.inicio), 0)
   const xEsq = d.margem
   const xDir = d.largura - d.margem
-  const util = xDir - xEsq
   const pendentes = c.atrasadas + c.aFazer
   const noRitmo = `cerca de ${c.cabem} cabem em ${plural(c.diasUteis, 'dia útil', 'dias úteis')} no seu ritmo`
 
@@ -459,62 +533,15 @@ function numeros(d: Desenho, semana: Semana) {
     },
   ]
 
-  // A barra: cada trecho proporcional ao total, com um mínimo para um trecho
-  // pequeno não sumir (o que o mínimo acrescenta sai do maior) e um fio entre
-  // eles, o mesmo das colunas do gráfico.
   const yBarra = yTopo + 14
-  const h = 10
-  const vao = 1
-  const visiveis = trechos.filter(t => t.n > 0)
-  const livre = util - vao * Math.max(0, visiveis.length - 1)
-  const larguras = visiveis.map(t => Math.max(4, (t.n / c.total) * livre))
-  const maior = larguras.indexOf(Math.max(...larguras))
-  if (maior >= 0) larguras[maior] = (larguras[maior] ?? 0) - (larguras.reduce((a, b) => a + b, 0) - livre)
+  barraEmpilhada(d, 'barra', yBarra, trechos)
 
-  add(d, `<clipPath id="barra"><rect x="${xEsq}" y="${yBarra}" width="${util}" height="${h}" rx="${h / 2}"/></clipPath>`)
-  if (visiveis.length === 0) add(d, `<rect x="${xEsq}" y="${yBarra}" width="${util}" height="${h}" rx="${h / 2}" class="trilha"/>`)
-  add(d, '<g clip-path="url(#barra)">')
-  let x = xEsq
-  for (const [i, t] of visiveis.entries()) {
-    const w = larguras[i] ?? 0
-    add(
-      d,
-      `<g><title>${esc(t.dica)}</title>`,
-      `<rect x="${x}" y="${yBarra}" width="${w}" height="${h}" class="${t.classe === 'excesso' ? 'coluna' : t.classe}"/>`,
-      t.classe === 'excesso' ? `<rect x="${x}" y="${yBarra}" width="${w}" height="${h}" fill="url(#excesso)"/>` : '',
-      '</g>',
-    )
-    x += w + vao
-  }
-  add(d, '</g>')
-
-  // A legenda, com os números em cor de texto: a cor fica só no quadradinho.
-  let y = yBarra + h + 20
-  let xl = xEsq
-  const quebra = (largura: number) => {
-    if (xl > xEsq && xl + largura > xDir) {
-      xl = xEsq
-      y += 18
-    }
-  }
+  let y = yBarra + ALTURA_DA_BARRA + 20
   if (c.total === 0) add(d, texto(xEsq, y, 'Nenhuma tarefa nesta semana', { tamanho: 12, classe: 'sec' }))
   // As concluídas aparecem mesmo zeradas, menos numa semana que ainda nem começou.
   const comecou = semana.dias.some(x => x.data <= semana.hoje)
   const naLegenda = trechos.filter(t => t.classe !== 'coluna' && (t.n > 0 || (t.classe === 'feita' && comecou)))
-  for (const t of c.total === 0 ? [] : naLegenda) {
-    const larguraDoNumero = larguraDoTexto(String(t.n), 12, true)
-    const largura = 14 + larguraDoNumero + 3 + larguraDoTexto(t.rotulo, 12)
-    quebra(largura)
-    add(
-      d,
-      `<g><title>${esc(t.dica)}</title>`,
-      amostra(xl, y - 8.5, t.classe),
-      texto(xl + 14, y, String(t.n), { tamanho: 12, peso: 700, classe: 'txt' }),
-      texto(xl + 14 + larguraDoNumero + 3, y, t.rotulo, { tamanho: 12, classe: 'sec' }),
-      '</g>',
-    )
-    xl += largura + 14
-  }
+  y = legenda(d, y, c.total === 0 ? [] : naLegenda)
 
   // As prioritárias: quando não cabe tudo, é das outras que se tira. Com a
   // legenda vazia (semana futura que cabe no ritmo), sobem para o lugar dela.
@@ -844,6 +871,83 @@ export function origensEmLinhas(semana: Semana): string[] {
     ...(pessoas.length > 0 ? [emLinha('Quem pediu', pessoas, n => `${n} outras pessoas`)] : []),
     ...(espacos.length > 0 ? [emLinha('Espaços', espacos, n => `${n} outros espaços`)] : []),
   ]
+}
+
+/** As conversas com dono conhecido: as que entram na barra. */
+const conversasDa = (c: Colaboracao) => c.suas + c.pediu + c.outros
+const foraDasSuas = (c: Colaboracao) => c.pediu + c.outros
+
+/**
+ * Colaboração: as conversas do Basecamp em que comentei na semana mostrada,
+ * numa barra dividida pelo dono do item: minhas, que eu pedi a alguém e de
+ * outras pessoas. Ao lado do título, o total e quantas ficaram fora das minhas
+ * tarefas. Sem nenhuma conversa, não aparece. Para ver outra semana, o
+ * /semana anterior ou -N: o bloco segue a semana do painel.
+ */
+function colaboracao(d: Desenho, semana: Semana) {
+  const c = semana.colaboracao
+  if (c === undefined || conversasDa(c) === 0) return
+  const xEsq = d.margem
+  const xDir = d.largura - d.margem
+  const yTitulo = d.y + 18
+  const fora = foraDasSuas(c)
+  const nota = `${plural(conversasDa(c), 'conversa', 'conversas')}, ${fora === 0 ? 'todas suas' : `${fora} fora das suas`}`
+  const dica = [
+    `${plural(conversasDa(c), 'conversa', 'conversas')} do Basecamp em que você comentou nesta semana`,
+    plural(c.comentarios, 'comentário', 'comentários'),
+    ...(c.semDono > 0 ? [`${c.semDono} que não deu para abrir`] : []),
+  ].join(' · ')
+  add(
+    d,
+    `<g><title>${esc(dica)}</title>`,
+    texto(xEsq, yTitulo, 'Colaboração', { tamanho: 14, peso: 700, classe: 'txt' }),
+    texto(xDir, yTitulo, nota, { tamanho: 11.5, classe: 'sec', ancora: 'end' }),
+    '</g>',
+  )
+
+  const trechos: Trecho[] = [
+    {
+      n: c.suas,
+      classe: 'coluna',
+      rotulo: c.suas === 1 ? 'sua' : 'suas',
+      dica: `${plural(c.suas, 'conversa', 'conversas')} em tarefas suas, ou em itens que você criou sem passar para ninguém`,
+    },
+    {
+      n: c.pediu,
+      classe: 'pediu',
+      rotulo: 'que você pediu',
+      dica: `${plural(c.pediu, 'conversa', 'conversas')} em tarefas que você criou e passou para outra pessoa`,
+    },
+    {
+      n: c.outros,
+      classe: 'de-outros',
+      rotulo: 'de outras pessoas',
+      dica:
+        `${plural(c.outros, 'conversa', 'conversas')} em tarefas e mensagens de outras pessoas` +
+        (c.outros > 0 ? `, em ${plural(c.espacosDeOutros, 'espaço', 'espaços')}` : ''),
+    },
+  ]
+  const yBarra = yTitulo + 14
+  barraEmpilhada(d, 'colaboracao', yBarra, trechos)
+  d.y = legenda(d, yBarra + ALTURA_DA_BARRA + 20, trechos) + 22
+}
+
+/** A colaboração da semana numa linha, para o terminal. */
+export function colaboracaoEmLinhas(semana: Semana): string[] {
+  const c = semana.colaboracao
+  if (c === undefined || conversasDa(c) === 0) return []
+  return [
+    `Colaboração: ${plural(conversasDa(c), 'conversa', 'conversas')} · ${plural(c.suas, 'sua', 'suas')} · ${c.pediu} que você pediu · ${c.outros} de outras pessoas`,
+  ]
+}
+
+/** " Colaboração: 23 conversas no Basecamp, 9 fora das suas tarefas.", para o fim do resumo; vazio sem conversas. */
+function colaboracaoEmTexto(semana: Semana): string {
+  const c = semana.colaboracao
+  if (c === undefined || conversasDa(c) === 0) return ''
+  const fora = foraDasSuas(c)
+  const onde = fora === 0 ? 'todas nas suas tarefas' : `${fora} fora das suas tarefas`
+  return ` Colaboração: ${plural(conversasDa(c), 'conversa', 'conversas')} no Basecamp, ${onde}.`
 }
 
 type Linha = {
@@ -1219,7 +1323,7 @@ type OpcoesDoPainel = { largura?: number; titulo?: string }
 /**
  * O SVG do painel e suas medidas, para a largura pedida em pixels. A ordem
  * segue o uso: primeiro o que fazer, hoje e nos próximos dias, e por último a
- * análise da semana (tarefas por dia, quem pediu e espaços), para os gráficos
+ * análise da semana (tarefas por dia, quem pediu, espaços e colaboração), para os gráficos
  * não separarem hoje de amanhã. Em outra semana não há o card de hoje, e todos
  * os dias ganham seu bloco.
  */
@@ -1240,6 +1344,7 @@ export function desenharSemana(semana: Semana, opcoes: OpcoesDoPainel = {}): { s
   d.y += 22
   grafico(d, semana)
   origens(d, semana)
+  colaboracao(d, semana)
   rodape(d, semana)
 
   const altura = Math.ceil(d.y)
@@ -1312,7 +1417,7 @@ export function resumoEmTexto(semana: Semana): string {
           plural(c.feitas, 'concluída', 'concluídas'),
           ...(c.alem > 0 ? [`${c.alem} além do ritmo`] : []),
         ]
-  return `Hoje: ${juntar(deHoje)}. Semana de ${periodoDe(semana)}: ${juntar(daSemana)}.`
+  return `Hoje: ${juntar(deHoje)}. Semana de ${periodoDe(semana)}: ${juntar(daSemana)}.${colaboracaoEmTexto(semana)}`
 }
 
 /** Numa semana passada, o que foi concluído e o que ficou; numa futura, o que passa do ritmo. */
@@ -1327,5 +1432,5 @@ function resumoDeOutraSemana(semana: Semana, nome: string): string {
     ...(c.alem > 0 ? [`${c.alem} além do ritmo`] : []),
     reunioes === 0 ? 'nenhuma reunião' : plural(reunioes, 'reunião', 'reuniões'),
   ]
-  return `${nome.charAt(0).toUpperCase()}${nome.slice(1)}, de ${periodoDe(semana)}: ${juntar(partes)}.`
+  return `${nome.charAt(0).toUpperCase()}${nome.slice(1)}, de ${periodoDe(semana)}: ${juntar(partes)}.${colaboracaoEmTexto(semana)}`
 }

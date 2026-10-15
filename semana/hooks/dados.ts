@@ -1,7 +1,7 @@
 // Transforma o que a agenda (Google Calendar) e o Basecamp respondem na
 // Semana que o painel desenha. Só funções puras: a busca, que usa o `$`, fica
 // no register.tsx, porque o `$` não atravessa imports.
-import type { Conclusoes, Criador, Dia, Evento, Prioridade, Semana, Tarefa } from '../types'
+import type { Colaboracao, Comentario, Conclusoes, Criador, Dia, Dono, Evento, Prioridade, Semana, Tarefa } from '../types'
 
 export const DIAS_NA_JANELA = 7
 
@@ -252,19 +252,40 @@ export const EVENTOS_POR_LEITURA = 300
 /** O primeiro dia que o ritmo usa: o domingo de SEMANAS_DO_RITMO semanas atrás. */
 export const inicioDoRitmo = (hoje: string) => somarDias(domingoDa(hoje), -7 * SEMANAS_DO_RITMO)
 
+/** O primeiro dia que fica guardado da linha do tempo: uma semana antes do ritmo. */
+const corteDaLinhaDoTempo = (hoje: string) => somarDias(inicioDoRitmo(hoje), -7)
+
 /** As conclusões guardadas, se o que veio do armazenamento tiver a forma certa. */
 export function comoConclusoes(valor: unknown): Conclusoes | undefined {
   const c = valor as Partial<Conclusoes> | null | undefined
-  return typeof c?.dias === 'object' && c.dias !== null && typeof c.cobertura === 'string' && typeof c.lidoAte === 'string'
+  const comentariosOk = c?.comentarios === undefined || (typeof c.comentarios === 'object' && c.comentarios !== null)
+  return typeof c?.dias === 'object' && c.dias !== null && typeof c.cobertura === 'string' && typeof c.lidoAte === 'string' && comentariosOk
     ? (c as Conclusoes)
     : undefined
 }
 
-/** Ler a linha do tempo desde longe: nada guardado, ou o guardado não cobre o ritmo. */
+/**
+ * Ler a linha do tempo desde longe: nada guardado, o guardado não cobre o
+ * ritmo, ou veio de uma versão que ainda não guardava os comentários.
+ */
 export const precisaDoHistorico = (salvas: Conclusoes | undefined, hoje: string) =>
-  salvas === undefined || salvas.cobertura > inicioDoRitmo(hoje)
+  salvas === undefined || salvas.comentarios === undefined || salvas.cobertura > inicioDoRitmo(hoje)
 
-type EventoDaLinhaDoTempo = { kind?: string; created_at?: string; url?: string; app_url?: string }
+/**
+ * O filtro do `basecamp timeline me --agent --jq`: de cada evento, o tipo, a
+ * hora e o endereço; de um comentário, também a conversa e o espaço.
+ */
+export const FILTRO_DA_LINHA_DO_TEMPO =
+  '[.[] | {kind, created_at, url} + (if .kind == "comment_created" then {conversa: .parent_recording_id, espaco: .bucket.name} else {} end)]'
+
+type EventoDaLinhaDoTempo = {
+  kind?: string
+  created_at?: string
+  url?: string
+  app_url?: string
+  conversa?: unknown
+  espaco?: unknown
+}
 
 /**
  * Junta o que a linha do tempo respondeu ao que já estava guardado. Vale o
@@ -276,12 +297,21 @@ type EventoDaLinhaDoTempo = { kind?: string; created_at?: string; url?: string; 
 export function lerConclusoes(salvas: Conclusoes | undefined, eventos: unknown[], limite: number, hoje: string): Conclusoes {
   const doHistorico = precisaDoHistorico(salvas, hoje)
   const dias: Record<string, string> = doHistorico ? {} : { ...salvas?.dias }
+  const comentarios: Record<string, Comentario> = doHistorico ? {} : { ...salvas?.comentarios }
   const instante = (e: EventoDaLinhaDoTempo) => Date.parse(e.created_at ?? '')
   const ordenados = (eventos as EventoDaLinhaDoTempo[])
     .filter(e => typeof e?.created_at === 'string' && !Number.isNaN(instante(e)))
     .sort((a, b) => instante(a) - instante(b))
 
   for (const e of ordenados) {
+    if (e.kind === 'comment_created') {
+      const comentario = (e.url ?? '').match(/\/comments\/(\d+)/)?.[1]
+      if (comentario !== undefined && typeof e.conversa === 'number') {
+        const espaco = typeof e.espaco === 'string' ? e.espaco.trim() : ''
+        comentarios[comentario] = { dia: dataLocal(instante(e)), conversa: e.conversa, espaco }
+      }
+      continue
+    }
     const id = (e.url ?? e.app_url ?? '').match(/\/todos\/(\d+)/)?.[1]
     if (id === undefined) continue
     if (e.kind === 'todo_completed') dias[id] = dataLocal(instante(e))
@@ -299,12 +329,80 @@ export function lerConclusoes(salvas: Conclusoes | undefined, eventos: unknown[]
         : (salvas?.cobertura ?? '0000-01-01')
 
   // O que é mais velho que o ritmo precisa não fica guardado.
-  const corte = somarDias(inicioDoRitmo(hoje), -7)
+  const corte = corteDaLinhaDoTempo(hoje)
   return {
     dias: Object.fromEntries(Object.entries(dias).filter(([, dia]) => dia >= corte)),
+    comentarios: Object.fromEntries(Object.entries(comentarios).filter(([, c]) => c.dia >= corte)),
     cobertura,
     lidoAte: maisNovo,
   }
+}
+
+/**
+ * O domingo da semana mostrada, se dá para contar a colaboração nela: a linha
+ * do tempo precisa cobri-la inteira, e ela não pode ter saído do que fica
+ * guardado. Uma semana futura não tem colaboração. Null quando não dá.
+ */
+export function semanaDeColaboracao(hoje: string, deslocamento: number, cobertura: string): string | null {
+  if (deslocamento > 0) return null
+  const domingo = somarDias(domingoDa(hoje), 7 * deslocamento)
+  return domingo >= cobertura && domingo >= corteDaLinhaDoTempo(hoje) ? domingo : null
+}
+
+/** Os comentários feitos de `domingo` a sábado. */
+const comentariosDaSemana = (comentarios: Record<string, Comentario>, domingo: string) => {
+  const sabado = somarDias(domingo, DIAS_NA_JANELA - 1)
+  return Object.values(comentarios).filter(c => c.dia >= domingo && c.dia <= sabado)
+}
+
+/** As conversas em que comentei na semana que começa em `domingo`, sem repetir. */
+export function conversasDaSemana(comentarios: Record<string, Comentario>, domingo: string): number[] {
+  return [...new Set(comentariosDaSemana(comentarios, domingo).map(c => c.conversa))]
+}
+
+/** O filtro do `basecamp show <id> --jq` que traz só quem criou o item e quem é responsável. */
+export const FILTRO_DO_DONO = '.data | {criador: .creator.id, responsaveis: [.assignees[]?.id]}'
+
+/** O dono, da resposta de `basecamp show <id> --jq FILTRO_DO_DONO`. */
+export function lerDono(resposta: unknown): Dono | null {
+  const d = resposta as { criador?: unknown; responsaveis?: unknown } | null
+  return typeof d?.criador === 'number' && Array.isArray(d.responsaveis) && d.responsaveis.every(r => typeof r === 'number')
+    ? { criador: d.criador, responsaveis: d.responsaveis as number[] }
+    : null
+}
+
+/** Os donos guardados, se o que veio do armazenamento tiver a forma certa. */
+export const comoDonos = (valor: unknown): Record<string, Dono> => comoGuardados(valor, lerDono)
+
+/**
+ * De quem é a conversa: minha, quando sou responsável ou quando criei e não
+ * passei para ninguém (uma mensagem, um documento); que eu pedi, quando criei
+ * e outra pessoa é a responsável; de outras pessoas no resto.
+ */
+export function deQuem(dono: Dono | undefined, eu: number): 'suas' | 'pediu' | 'outros' | 'semDono' {
+  if (dono === undefined) return 'semDono'
+  if (dono.responsaveis.includes(eu)) return 'suas'
+  if (dono.criador === eu) return dono.responsaveis.length > 0 ? 'pediu' : 'suas'
+  return 'outros'
+}
+
+/** As conversas em que comentei na semana que começa em `domingo`, divididas pelo dono do item comentado. */
+export function lerColaboracao(
+  comentarios: Record<string, Comentario>,
+  donos: Record<string, Dono>,
+  eu: number,
+  domingo: string,
+): Colaboracao {
+  const daSemana = comentariosDaSemana(comentarios, domingo)
+  const conversas = new Map(daSemana.map(c => [c.conversa, c.espaco]))
+  const conta = { suas: 0, pediu: 0, outros: 0, semDono: 0 }
+  const espacosDeOutros = new Set<string>()
+  for (const [conversa, espaco] of conversas) {
+    const dono = deQuem(donos[String(conversa)], eu)
+    conta[dono]++
+    if (dono === 'outros') espacosDeOutros.add(espaco)
+  }
+  return { ...conta, comentarios: daSemana.length, espacosDeOutros: espacosDeOutros.size }
 }
 
 /** Meu id de pessoa na conta, da resposta de `basecamp people show me --json`. */
@@ -324,28 +422,37 @@ export function lerCriador(resposta: unknown): Criador | null {
     : null
 }
 
-/** Quantos criadores guardar entre leituras: quem criou uma tarefa não muda, mas a lista não cresce sem fim. */
+/**
+ * Quantos criadores (e quantos donos de conversa) guardar entre leituras: quem
+ * criou um item não muda, mas a lista não cresce sem fim.
+ */
 export const CRIADORES_GUARDADOS = 3000
 
-/** Os criadores guardados, se o que veio do armazenamento tiver a forma certa. */
-export function comoCriadores(valor: unknown): Record<string, Criador> {
+/** O que estava guardado por id, só com os itens que `ler` aceita. */
+function comoGuardados<T>(valor: unknown, ler: (item: unknown) => T | null): Record<string, T> {
   if (typeof valor !== 'object' || valor === null) return {}
   return Object.fromEntries(
-    Object.entries(valor).flatMap(([id, c]) => {
-      const lido = lerCriador(c)
+    Object.entries(valor).flatMap(([id, item]) => {
+      const lido = ler(item)
       return lido === null ? [] : [[id, lido]]
     }),
   )
 }
 
+/** Os criadores guardados, se o que veio do armazenamento tiver a forma certa. */
+export const comoCriadores = (valor: unknown): Record<string, Criador> => comoGuardados(valor, lerCriador)
+
 /**
- * Junta os criadores novos aos guardados. Além do limite, saem os de id menor,
- * que são as tarefas mais antigas: um objeto ordena chaves numéricas pelo valor.
+ * Junta os itens novos aos guardados. Além do limite, saem os de id menor,
+ * que são os mais antigos: um objeto ordena chaves numéricas pelo valor.
  */
-export function juntarCriadores(salvos: Record<string, Criador>, novos: Record<string, Criador>): Record<string, Criador> {
+export function juntarGuardados<T>(salvos: Record<string, T>, novos: Record<string, T>): Record<string, T> {
   const todos = Object.entries({ ...salvos, ...novos })
   return Object.fromEntries(todos.slice(Math.max(0, todos.length - CRIADORES_GUARDADOS)))
 }
+
+/** Junta os criadores novos aos guardados, até o limite. */
+export const juntarCriadores = (salvos: Record<string, Criador>, novos: Record<string, Criador>) => juntarGuardados(salvos, novos)
 
 /** Em que pé está uma tarefa que entra no total da semana. */
 export type Estado = 'feita' | 'atrasada' | 'aFazer'
@@ -409,6 +516,8 @@ export function montarSemana(args: {
   criadores?: Record<string, Criador>
   /** Meu id de pessoa no Basecamp. */
   eu?: number | null
+  /** De quem é cada conversa comentada, por id; sem isso, a semana fica sem colaboração. */
+  donos?: Record<string, Dono>
 }): Semana {
   const comCriador = (t: Tarefa): Tarefa => {
     const criador = args.criadores?.[String(t.id)]
@@ -462,6 +571,14 @@ export function montarSemana(args: {
   }).filter(n => n > 0)
   const totalFeito = feitasPorSemana.reduce((a, b) => a + b, 0)
 
+  // A colaboração precisa saber quem sou e de quem é cada conversa.
+  const comentarios = args.conclusoes?.comentarios
+  const domingoDaColaboracao = semanaDeColaboracao(hoje, deslocamento, args.conclusoes?.cobertura ?? '')
+  const colaboracao =
+    comentarios === undefined || domingoDaColaboracao === null || args.donos === undefined || args.eu === undefined || args.eu === null
+      ? undefined
+      : lerColaboracao(comentarios, args.donos, args.eu, domingoDaColaboracao)
+
   // Fora da semana de hoje, as atrasadas são só as da semana mostrada, e o Up
   // next, que é do bloco Hoje, fica de fora.
   const daSemana = (t: Tarefa) => deslocamento === 0 || (t.vence >= domingo && t.vence <= sabado)
@@ -479,5 +596,6 @@ export function montarSemana(args: {
     contaBasecamp: args.contaBasecamp,
     nome: args.nome ?? null,
     eu: args.eu ?? null,
+    ...(colaboracao === undefined ? {} : { colaboracao }),
   }
 }

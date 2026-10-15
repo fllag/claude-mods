@@ -18,7 +18,14 @@ Depois dos dias vem a análise da semana:
 
   Os dois gráficos contam as mesmas tarefas do total do topo, e cada barra tem as mesmas cores: concluídas, atrasadas e a fazer.
 
-O **ritmo** é a média de tarefas que você concluiu por dia útil nas últimas 4 semanas. Semana sem nenhuma concluída (férias, por exemplo) fica de fora. Na primeira vez o painel lê seu histórico do Basecamp e abre cada tarefa da semana para saber quem a criou, o que leva uns 20 segundos. Depois só busca o que é novo.
+- **Colaboração:** em quantas conversas do Basecamp você comentou na semana. Cada conversa é a tarefa, o card ou a mensagem em que você comentou, contada uma vez, por mais comentários que tenha. A barra divide as conversas pelo dono do item:
+  - **suas:** você é responsável, ou criou o item sem passar para ninguém (uma mensagem, um documento);
+  - **que você pediu:** você criou e passou para outra pessoa, ou seja, acompanhamento;
+  - **de outras pessoas:** o item é de outra pessoa, e você entrou para ajudar ou responder.
+
+  Ao lado do título fica o total e quantas estão fora das suas tarefas. É o trabalho que não aparece no total do topo, mas toma tempo. Serve de contexto, não de meta: comentar mais ou menos não é o objetivo. Para comparar com outra semana, use `/semana anterior` ou `/semana -2`: o bloco segue a semana do painel, até 4 semanas para trás.
+
+O **ritmo** é a média de tarefas que você concluiu por dia útil nas últimas 4 semanas. Semana sem nenhuma concluída (férias, por exemplo) fica de fora. Na primeira vez o painel lê seu histórico do Basecamp, abre cada tarefa da semana para saber quem a criou e cada conversa em que você comentou para saber de quem ela é, o que pode levar quase um minuto. Depois só busca o que é novo. Quem atualiza de uma versão sem a colaboração passa por essa primeira leitura mais uma vez.
 
 **Prioridade:** comece o título da tarefa no Basecamp com 🔴 para urgente ou 🟢 para importante. Ela entra na conta de urgentes e importantes do topo, de Hoje e de Amanhã, sobe nas listas e ganha uma bolinha colorida no painel. Não usa ícone? Tudo funciona igual, só sem essa conta.
 
@@ -55,7 +62,7 @@ Feche o Claude Code e abra de novo. Depois escreva `/semana`.
 
 ## Usar
 
-`/semana` abre o painel e responde com um resumo, como "Hoje: 16 tarefas, 2 atrasadas e nenhuma reunião. Semana de 11 a 17 de outubro: 75 tarefas, 3 concluídas e 36 além do ritmo."
+`/semana` abre o painel e responde com um resumo, como "Hoje: 16 tarefas, 2 atrasadas e nenhuma reunião. Semana de 11 a 17 de outubro: 75 tarefas, 3 concluídas e 36 além do ritmo. Colaboração: 23 conversas no Basecamp, 9 fora das suas tarefas."
 
 Para ver outra semana, escreva qual depois do comando:
 
@@ -90,6 +97,8 @@ Está no [README do catálogo](../README.md#atualizar).
 ## Limites conhecidos
 
 - Testado no Mac. No Windows a CLI do Basecamp pode não ser encontrada.
+- A colaboração conta só comentários. Campfire, pings e menções que você leu sem responder ficam de fora.
+- O dono de cada conversa é lido uma vez e fica guardado. Se a tarefa mudar de responsável depois, a conta não acompanha.
 - Uma atualização do Claude Code pode quebrar o painel até sair uma versão nova dele. Enquanto isso, desligue com `claude plugin disable semana@hospedin-mods`.
 
 ## Para quem mexe no código

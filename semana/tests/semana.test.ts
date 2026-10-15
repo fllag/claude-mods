@@ -2,12 +2,16 @@ import { expect, mock, test } from 'claude-code/testing'
 import type { On } from 'claude-code'
 
 import {
+  deQuem,
+  FILTRO_DO_DONO,
   importancia,
   juntarCriadores,
   lerConclusoes,
   lerDeslocamento,
   montarSemana,
+  precisaDoHistorico,
   primeiroNome,
+  semanaDeColaboracao,
   semMarcaDePrioridade,
 } from '../hooks/dados'
 import {
@@ -80,6 +84,34 @@ const LINHA_DO_TEMPO = CONCLUIDAS.map(t => ({
   url: `https://3.basecampapi.com/123/buckets/1/todos/${t.id}.json`,
 }))
 
+// Comentários meus na linha do tempo: cinco conversas nesta semana e duas na passada.
+const comentario = (id: number, conversa: number, espaco: string, quando: string) => ({
+  kind: 'comment_created',
+  created_at: quando,
+  url: `https://3.basecampapi.com/123/buckets/1/comments/${id}.json`,
+  conversa,
+  espaco,
+})
+const COMENTARIOS = [
+  comentario(900, 100, 'Pessoal', '2026-10-12T10:00:00'),
+  comentario(901, 100, 'Pessoal', '2026-10-13T09:00:00'),
+  comentario(902, 101, 'Comercial', '2026-10-12T11:00:00'),
+  comentario(903, 102, 'Financeiro', '2026-10-12T12:00:00'),
+  comentario(904, 103, 'Comercial', '2026-10-13T08:00:00'),
+  comentario(905, 104, 'Jurídico', '2026-10-11T15:00:00'),
+  comentario(906, 102, 'Financeiro', '2026-10-07T10:00:00'),
+  comentario(907, 105, 'Pessoal', '2026-10-06T10:00:00'),
+]
+
+// De quem é cada conversa; a 104 não abre.
+const DONOS: Record<string, { criador: number; responsaveis: number[] }> = {
+  100: { criador: 8, responsaveis: [7] }, // tarefa minha
+  101: { criador: 7, responsaveis: [8] }, // eu pedi ao Bruno
+  102: { criador: 8, responsaveis: [9] }, // do Bruno para a Carla
+  103: { criador: 9, responsaveis: [] }, // mensagem da Carla
+  105: { criador: 7, responsaveis: [] }, // documento meu
+}
+
 // No Up next, uma tarefa que venceu na segunda passada.
 const UP_NEXT = [{ id: 50, content: 'Revisar metas do trimestre', due_on: '2026-10-05', bucket: { name: 'Pessoal' } }]
 
@@ -107,15 +139,17 @@ type Mundo = {
   falhasDaLinhaDoTempo?: number
   /** O que o mod já tinha guardado. */
   guardado?: Record<string, unknown>
+  /** A linha do tempo traz também os COMENTARIOS. */
+  comentarios?: boolean
 }
 
 /**
  * Agenda, Basecamp e o resto do Claude Code respondendo de memória. Devolve o
  * que foi pedido: os dias lidos da agenda e os escopos do Basecamp.
  */
-function mundo(on: On, { agenda: agendaFunciona = true, basecamp = 'ok', falhasDaLinhaDoTempo = 0, guardado }: Mundo = {}) {
+function mundo(on: On, { agenda: agendaFunciona = true, basecamp = 'ok', falhasDaLinhaDoTempo = 0, guardado, comentarios = false }: Mundo = {}) {
   const relogio = mock.clock(on, { now: AGORA })
-  const pedidos = { dias: [] as string[], escopos: [] as string[], criadores: [] as string[], linhasDoTempo: 0, relogio }
+  const pedidos = { dias: [] as string[], escopos: [] as string[], criadores: [] as string[], donos: [] as string[], linhasDoTempo: 0, relogio }
   mock.store(on, guardado)
   mock.env(on, { HOME: '/Users/teste' })
   on('tool.list', () => ({
@@ -136,7 +170,12 @@ function mundo(on: On, { agenda: agendaFunciona = true, basecamp = 'ok', falhasD
     if (basecamp === 'sem-login') return { value: { exitCode: 1, stdout: '', stderr: 'not authenticated' } }
     const [, grupo, sub, escopo] = e.argv
     if (grupo === 'assignments' && sub === 'due') pedidos.escopos.push(escopo ?? '')
-    // O show vem com --jq: só quem criou, sem o envelope.
+    // O show vem com --jq: só o dono da conversa, ou só quem criou, sem o envelope.
+    if (grupo === 'show' && e.argv[4] === FILTRO_DO_DONO) {
+      pedidos.donos.push(sub ?? '')
+      const dono = DONOS[sub ?? '']
+      return { value: { exitCode: dono === undefined ? 1 : 0, stdout: JSON.stringify(dono ?? null), stderr: '' } }
+    }
     if (grupo === 'show') {
       pedidos.criadores.push(sub ?? '')
       const criador = CRIADORES[sub ?? '']
@@ -148,7 +187,7 @@ function mundo(on: On, { agenda: agendaFunciona = true, basecamp = 'ok', falhasD
     // A linha do tempo vem com --agent: só os dados, sem o envelope.
     const stdout =
       grupo === 'timeline'
-        ? JSON.stringify(LINHA_DO_TEMPO)
+        ? JSON.stringify(comentarios ? [...LINHA_DO_TEMPO, ...COMENTARIOS] : LINHA_DO_TEMPO)
         : JSON.stringify({
             ok: true,
             data:
@@ -887,4 +926,88 @@ test('a análise da semana vem depois dos dias, para não separar hoje de amanh�
   expect(posicao('Amanhã')).toBeLessThan(posicao('Sábado'))
   expect(posicao('Sábado')).toBeLessThan(posicao('Tarefas por dia'))
   expect(posicao('Tarefas por dia')).toBeLessThan(posicao('Espaços'))
+})
+
+test('a colaboração conta as conversas da semana em que comentei, pelo dono do item', async ($, on) => {
+  const pedidos = mundo(on, { comentarios: true })
+  const { text } = await $.command.run({ command: 'semana', args: '' })
+
+  // Nesta semana: a 100 é minha, a 101 eu pedi, a 102 e a 103 são de outras
+  // pessoas e a 104 não abre, então fica fora da conta.
+  expect(text).toBe(`${RESUMO} Colaboração: 4 conversas no Basecamp, 3 fora das suas tarefas.`)
+  // Só as conversas da semana mostrada são abertas, uma vez cada, para saber de quem são.
+  expect([...pedidos.donos].sort()).toEqual(['100', '101', '102', '103', '104'])
+
+  const ui = await $.ui.mount({ ...PAINEL, surface: 'desktop' })
+  const svg = String((await ui.find({ type: 'Svg' }))?.props.source)
+  expect(svg).toContain('>Colaboração</text>')
+  expect(svg).toContain('>4 conversas, 3 fora das suas</text>')
+  expect(svg).toContain('>que você pediu</text>')
+  expect(svg).toContain('>de outras pessoas</text>')
+  expect(svg).toContain('<title>4 conversas do Basecamp em que você comentou nesta semana · 6 comentários · 1 que não deu para abrir</title>')
+  expect(svg).toContain('<title>2 conversas em tarefas e mensagens de outras pessoas, em 2 espaços</title>')
+  // Só a semana do painel: nada de comparar com as anteriores.
+  expect(svg).not.toContain('Semana passada')
+  // A análise termina na colaboração, depois dos espaços.
+  expect(svg.indexOf('>Espaços</text>')).toBeLessThan(svg.indexOf('>Colaboração</text>'))
+  await ui.unmount()
+
+  const terminal = await $.ui.mount({ ...PAINEL, surface: 'terminal' })
+  expect(
+    await terminal.find({ type: 'Text', text: /^Colaboração: 4 conversas · 1 sua · 1 que você pediu · 2 de outras pessoas$/ }),
+  ).toBeDefined()
+  await terminal.unmount()
+
+  // De quem é cada conversa fica guardado: a próxima leitura só tenta de novo a que não abriu.
+  pedidos.donos.length = 0
+  await $.command.run({ command: 'semana', args: '' })
+  expect(pedidos.donos).toEqual(['104'])
+
+  // A semana passada tem a sua própria conta: a 102, de outra pessoa, e a 105, um documento meu.
+  pedidos.donos.length = 0
+  const passada = await $.command.run({ command: 'semana', args: 'anterior' })
+  expect(passada.text).toContain('Colaboração: 2 conversas no Basecamp, 1 fora das suas tarefas.')
+  expect(pedidos.donos).toEqual(['105'])
+})
+
+test('a colaboração só conta uma semana que a linha do tempo cobre, e nunca uma futura', () => {
+  const hoje = '2026-10-13' // terça
+  expect(semanaDeColaboracao(hoje, 0, '0000-01-01')).toBe('2026-10-11')
+  // Até 4 semanas para trás, o que o /semana alcança, tudo fica guardado.
+  expect(semanaDeColaboracao(hoje, -4, '0000-01-01')).toBe('2026-09-13')
+  // A linha do tempo só está completa desde 1º de outubro: a semana de 27 de setembro fica sem conta.
+  expect(semanaDeColaboracao(hoje, -2, '2026-10-01')).toBeNull()
+  expect(semanaDeColaboracao(hoje, -1, '2026-10-01')).toBe('2026-10-04')
+  expect(semanaDeColaboracao(hoje, 1, '0000-01-01')).toBeNull()
+
+  // Minha quando sou responsável, ou quando criei e não passei para ninguém.
+  expect(deQuem({ criador: 8, responsaveis: [7, 9] }, 7)).toBe('suas')
+  expect(deQuem({ criador: 7, responsaveis: [] }, 7)).toBe('suas')
+  expect(deQuem({ criador: 7, responsaveis: [8] }, 7)).toBe('pediu')
+  expect(deQuem({ criador: 8, responsaveis: [] }, 7)).toBe('outros')
+  expect(deQuem(undefined, 7)).toBe('semDono')
+
+  // O guardado por uma versão que não lia comentários pede o histórico de novo.
+  const antiga = { dias: { 1: '2026-10-12' }, cobertura: '0000-01-01', lidoAte: '2026-10-12T10:00:00' }
+  expect(precisaDoHistorico(antiga, hoje)).toBe(true)
+  const lida = lerConclusoes(antiga, [comentario(900, 100, 'Pessoal', '2026-10-12T10:00:00')], 1500, hoje)
+  expect(lida.comentarios).toEqual({ 900: { dia: '2026-10-12', conversa: 100, espaco: 'Pessoal' } })
+  expect(precisaDoHistorico(lida, hoje)).toBe(false)
+  // Comentário mais velho que o que fica guardado sai na leitura seguinte.
+  const depois = lerConclusoes(lida, [comentario(901, 100, 'Pessoal', '2026-08-01T10:00:00')], 300, hoje)
+  expect(Object.keys(depois.comentarios ?? {})).toEqual(['900'])
+
+  // Sem nenhuma conversa, o painel não desenha o bloco.
+  const semConversas = montarSemana({
+    agoraMs: new Date(2026, 9, 13, 9, 0).getTime(),
+    eventos: new Map(),
+    tarefas: [],
+    conclusoes: lerConclusoes(undefined, [], 1500, hoje),
+    donos: {},
+    eu: 7,
+    avisos: [],
+    contaBasecamp: null,
+  })
+  expect(semConversas.colaboracao?.comentarios).toBe(0)
+  expect(desenharSemana(semConversas, { largura: 400 }).svg).not.toContain('>Colaboração</text>')
 })
