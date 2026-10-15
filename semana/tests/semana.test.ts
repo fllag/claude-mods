@@ -1232,3 +1232,51 @@ test('só com chat, a colaboração aparece sem a barra; o guardado sem chat ped
   expect(lida.publicacoes?.['830']).toBeUndefined()
   expect(lida.chats?.['7003']).toEqual({ dia: '2026-10-12', espaco: 'Liderança' })
 })
+
+test('a linha do que publiquei e o título da colaboração cabem em qualquer largura', () => {
+  // 54 conversas: 15 minhas, 14 que pedi e 25 de outras pessoas; e 15 publicações.
+  const comentarios = Object.fromEntries(
+    Array.from({ length: 54 }, (_, i) => [String(1000 + i), { dia: '2026-10-12', conversa: 2000 + i, espaco: 'X' }]),
+  )
+  const conversas = Object.fromEntries(
+    Array.from({ length: 54 }, (_, i) => [
+      String(2000 + i),
+      i < 15
+        ? { criador: 7, responsaveis: [7], chamados: {} }
+        : i < 29
+          ? { criador: 7, responsaveis: [8], chamados: {} }
+          : { criador: 8, responsaveis: [9], chamados: {} },
+    ]),
+  )
+  const publicacoes = Object.fromEntries([
+    ...Array.from({ length: 13 }, (_, i) => [String(500 + i), { dia: '2026-10-12', tipo: 'mensagem' as const }]),
+    ['600', { dia: '2026-10-12', tipo: 'documento' as const }],
+    ['700', { dia: '2026-10-13', tipo: 'arquivo' as const }],
+  ])
+  const semana = montarSemana({
+    agoraMs: new Date(2026, 9, 13, 9, 0).getTime(),
+    eventos: new Map(),
+    tarefas: [],
+    conclusoes: { dias: {}, comentarios, chats: {}, publicacoes, cobertura: '0000-01-01', lidoAte: '2026-10-13T08:00:00' },
+    conversas,
+    eu: 7,
+    avisos: [],
+    contaBasecamp: null,
+  })
+  const valor = '>13 mensagens · 1 documento · 1 arquivo</text>'
+  const svg = (largura: number) => desenharSemana(semana, { largura }).svg
+
+  // Largo: rótulo inteiro e o valor à direita, na mesma linha; o total ao lado do destaque.
+  expect(svg(560)).toContain('>Publicado na semana</text>')
+  expect(svg(560)).toMatch(new RegExp(`text-anchor="end"${valor}`))
+  expect(svg(560)).toContain('>39 fora das suas</tspan><tspan class="sec"> de 54 conversas</tspan>')
+  // Médio: o rótulo encurta para o valor caber na mesma linha.
+  expect(svg(360)).toContain('>Publicado</text>')
+  expect(svg(360)).toMatch(new RegExp(`text-anchor="end"${valor}`))
+  // Estreito: o valor desce para a linha de baixo, e o total sai do lado do título (fica na dica).
+  expect(svg(300)).toContain('>Publicado na semana</text>')
+  expect(svg(300)).not.toMatch(new RegExp(`text-anchor="end"${valor}`))
+  expect(svg(300)).toContain(valor)
+  expect(svg(300)).toContain('>39 fora das suas</tspan><tspan class="sec"></tspan>')
+  expect(svg(300)).toContain('<title>54 conversas do Basecamp em que você comentou nesta semana')
+})

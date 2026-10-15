@@ -863,7 +863,10 @@ function colaboracao(d: Desenho, semana: Semana) {
   const yTitulo = d.y + 18
   const fora = foraDasSuas(c)
   const destaque = conversasDa(c) === 0 ? '' : fora === 0 ? 'todas suas' : `${fora} fora das suas`
-  const resto = conversasDa(c) === 0 ? '' : ` de ${plural(conversasDa(c), 'conversa', 'conversas')}`
+  // O total sai do lado do título quando não cabe; continua na dica.
+  const espaco = xDir - xEsq - larguraDoTexto('Colaboração', 14, true) - 12
+  const total = conversasDa(c) === 0 ? '' : ` de ${plural(conversasDa(c), 'conversa', 'conversas')}`
+  const resto = larguraDoTexto(destaque, 12, true) + larguraDoTexto(total, 12) <= espaco ? total : ''
   const dica = [
     `${plural(conversasDa(c), 'conversa', 'conversas')} do Basecamp em que você comentou nesta semana`,
     plural(c.comentarios, 'comentário', 'comentários'),
@@ -989,16 +992,24 @@ function publicado(d: Desenho, semana: Semana) {
   if (p === undefined || totalPublicado(p) === 0) return
   const xEsq = d.margem
   const xDir = d.largura - d.margem
+  const valor = partesPublicadas(p).map(t => `${t.n} ${t.rotulo}`).join(' · ')
+  const larguraDoValor = larguraDoTexto(valor, 12, true)
+  // O rótulo encurta para caber na mesma linha do valor. Se nem assim couber,
+  // o valor desce para a linha de baixo, alinhado à esquerda.
+  const rotulo = ['Publicado na semana', 'Publicado'].find(r => larguraDoTexto(r, 12) + 12 + larguraDoValor <= xDir - xEsq)
   const y = d.y + 30
+  const yValor = rotulo === undefined ? y + 18 : y
   add(
     d,
     `<line x1="${xEsq}" x2="${xDir}" y1="${y - 20}" y2="${y - 20}" class="linha" stroke-width="1"/>`,
     '<g><title>O que você publicou no Basecamp nesta semana: trabalho seu que não vira tarefa</title>',
-    texto(xEsq, y, 'Publicado na semana', { tamanho: 12, classe: 'sec' }),
-    texto(xDir, y, partesPublicadas(p).map(t => `${t.n} ${t.rotulo}`).join(' · '), { tamanho: 12, peso: 700, classe: 'txt', ancora: 'end' }),
+    texto(xEsq, y, rotulo ?? 'Publicado na semana', { tamanho: 12, classe: 'sec' }),
+    rotulo === undefined
+      ? texto(xEsq, yValor, cortar(valor, 12, xDir - xEsq, true), { tamanho: 12, peso: 700, classe: 'txt' })
+      : texto(xDir, yValor, valor, { tamanho: 12, peso: 700, classe: 'txt', ancora: 'end' }),
     '</g>',
   )
-  d.y = y + 6
+  d.y = yValor + 6
 }
 
 /** A colaboração da semana, o chat dos projetos e o que publiquei, uma linha cada, para o terminal. */
